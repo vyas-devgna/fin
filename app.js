@@ -1171,7 +1171,9 @@ async function boot() {
   if (S.meta.lockEnabled && Native.isNative()) await runLockShield();
 
   wireNativeEvents();
-  Native.profileDevice().then((p) => p && console.info('[fin] device profiled', p));
+  // Stringified: Android's Logcat bridge renders objects as "[object Object]",
+  // which makes the one log line that proves setup worked entirely useless.
+  Native.profileDevice().then((p) => p && console.info('[fin] device profiled ' + JSON.stringify(p)));
 
   St.subscribe(() => render());
   history.replaceState({ name: 'home', param: null }, '', '');

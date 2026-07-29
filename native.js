@@ -146,30 +146,75 @@ export function healthCheck() {
  * Seeds the monitoring list from what is genuinely installed, so the defaults
  * match this phone instead of a generic list of apps you do not have.
  */
+/* Apps worth watching for transaction alerts. Verified against this device;
+ * anything not installed is skipped, and QUERY_ALL_PACKAGES means new installs
+ * are picked up without editing this list. */
 const CANDIDATES = [
-  'com.google.android.apps.nbu.paisa.user', 'com.phonepe.app', 'net.one97.paytm',
-  'in.org.npci.upiapp', 'in.amazon.mShop.android.shopping', 'com.whatsapp',
+  // UPI apps
+  'indwin.c3.shareapp',                    // slice — keeps its original Indwin/C3 id
+  'com.google.android.apps.nbu.paisa.user', // Google Pay
+  'in.org.npci.upiapp',                     // BHIM
+  'com.phonepe.app', 'net.one97.paytm',
+  'money.super.payments', 'com.fampay.in', 'com.yield.curie_money',
+  'in.amazon.mShop.android.shopping', 'com.whatsapp',
   'com.dreamplug.androidapp', 'com.samsung.android.spay', 'com.mobikwik_new',
-  // Present on this device:
-  'com.kotak811mobilebankingapp.instantsavingsupiscanandpayrecharge', 'com.kotak.neo', 'com.naviapp',
+  // Banks — these send the SMS and notifications worth capturing
+  'com.kotak811mobilebankingapp.instantsavingsupiscanandpayrecharge', // Kotak 811
+  'com.kotak.neo', 'com.naviapp',
   'com.snapwork.hdfc', 'com.sbi.lotusintouch',
   'com.csam.icici.bank.imobile', 'com.msf.kbank.mobile', 'com.axis.mobile',
+  // SMS
   'com.google.android.apps.messaging', 'com.samsung.android.messaging',
+];
+
+/**
+ * Preferred payment route, most-wanted first.
+ *
+ * slice leads because it is the account actually used. Note that PhonePe and
+ * Paytm are deliberately absent: both are installed on this device but register
+ * no `upi://pay` handler, so a directed intent at them resolves to nothing. They
+ * would need their own schemes, and until then the chooser fallback covers them.
+ */
+const UPI_PREFERENCE = [
+  'indwin.c3.shareapp',
+  'com.google.android.apps.nbu.paisa.user',
+  'in.org.npci.upiapp',
+  'money.super.payments',
 ];
 
 export async function profileDevice() {
   if (!isNative() || S.meta.deviceProfiled) return null;
   const present = CANDIDATES.filter(hasPackage);
   if (present.length) await setMonitoredApps(present);
-  // Default the payment route to whichever UPI app is actually installed,
-  // preferring the one most likely to be set up already.
-  const upi = upiApps().map((a) => a.package);
-  const preferred = ['com.google.android.apps.nbu.paisa.user', 'com.phonepe.app', 'net.one97.paytm', 'in.org.npci.upiapp']
-    .find((p) => upi.includes(p)) || upi[0];
+
+  // Only ever route to an app that genuinely resolves upi://pay — an installed
+  // app that does not handle the scheme is not a payment target.
+  const canPay = upiApps().map((a) => a.package);
+  const preferred = UPI_PREFERENCE.find((p) => canPay.includes(p)) || canPay[0] || null;
   if (preferred && !S.meta.defaultUpiApp) await St.setMeta('defaultUpiApp', preferred);
+
   await St.setMeta('deviceProfiled', true);
-  return { monitored: present, defaultUpiApp: preferred };
+  return { monitored: present.length, canPay, defaultUpiApp: preferred };
 }
+
+/** Friendly names for the apps this phone actually has. */
+export const APP_LABELS = {
+  'indwin.c3.shareapp': 'slice',
+  'com.google.android.apps.nbu.paisa.user': 'Google Pay',
+  'in.org.npci.upiapp': 'BHIM',
+  'com.phonepe.app': 'PhonePe',
+  'net.one97.paytm': 'Paytm',
+  'money.super.payments': 'super.money',
+  'com.fampay.in': 'FamPay',
+  'com.yield.curie_money': 'Curie Money',
+  'com.whatsapp': 'WhatsApp',
+  'in.amazon.mShop.android.shopping': 'Amazon Pay',
+  'com.kotak811mobilebankingapp.instantsavingsupiscanandpayrecharge': 'Kotak 811',
+  'com.kotak.neo': 'Kotak Neo',
+  'com.naviapp': 'Navi',
+  'com.google.android.apps.messaging': 'Messages',
+};
+export const labelFor = (pkg) => APP_LABELS[pkg] || pkg;
 
 /* ── Registration ─────────────────────────────────────────────────────────────
  * Kotlin looks up window.FinApp.<name> and calls it if it is a function.

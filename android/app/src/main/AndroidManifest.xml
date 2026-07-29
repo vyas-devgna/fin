@@ -35,6 +35,13 @@
             <data android:scheme="upi" />
         </intent>
 
+        <package android:name="indwin.c3.shareapp" />                      <!-- slice (Indwin/C3 id) -->
+        <package android:name="money.super.payments" />                    <!-- super.money -->
+        <package android:name="com.fampay.in" />
+        <package android:name="com.yield.curie_money" />
+        <package android:name="com.kotak811mobilebankingapp.instantsavingsupiscanandpayrecharge" />
+        <package android:name="com.kotak.neo" />
+        <package android:name="com.naviapp" />
         <package android:name="com.google.android.apps.nbu.paisa.user" />  <!-- Google Pay -->
         <package android:name="com.phonepe.app" />
         <package android:name="net.one97.paytm" />
