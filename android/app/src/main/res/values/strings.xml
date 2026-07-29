@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name">Fin</string>
+    <string name="shortcut_upi_short">Scan &amp; Pay</string>
+    <string name="shortcut_upi_long">Scan UPI QR &amp; Pay</string>
+    <string name="shortcut_ai_short">AI Copilot</string>
+    <string name="shortcut_ai_long">OpenRouter AI Copilot</string>
+    <string name="shortcut_expense_short">Add Spend</string>
+    <string name="shortcut_expense_long">Record New Spending</string>
+</resources>

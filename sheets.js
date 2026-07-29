@@ -15,6 +15,10 @@ import {
   TYPES, fmt, parseAmount, effects, debtOutstanding, debtsByPerson, goalProgress,
   monthKey, monthLabel, relativeDay, uid,
 } from './core.js';
+import { parseUpiUri, buildUpiUri, launchUpiIntent, scanUpiQr } from './upi.js';
+import { callOpenRouter, parseChatToLedger, getAiFinancialAdvice, getAiConfig, setAiConfig } from './ai.js';
+import { getNotificationQueue, removeFromQueue, clearNotificationQueue, POPULAR_FINANCE_APPS, getMonitoredApps, setMonitoredApps } from './automation.js';
+
 
 const todayISO = (ts = Date.now()) => {
   const d = new Date(ts);
@@ -32,7 +36,21 @@ const ACTION_ORDER = ['spend', 'receive', 'receivable', 'transfer', 'save', 'len
 
 export function openActions() {
   const outstanding = St.S.debts.filter((d) => debtOutstanding(d, S.txns) > 0).length;
-  const body = `<div class="actions-grid">${ACTION_ORDER.map((k, i) => {
+  const notifyQueue = getNotificationQueue();
+  const body = `<div class="actions-quick">
+    <button class="quick-btn upi-quick" data-upi>
+      <span class="quick-ico tone-good">${icon('qr')}</span>
+      <div class="quick-text"><b>Scan & Pay</b><small>UPI Payment Manager</small></div>
+    </button>
+    <button class="quick-btn ai-quick" data-ai>
+      <span class="quick-ico tone-accent">${icon('spark')}</span>
+      <div class="quick-text"><b>AI Copilot</b><small>OpenRouter Advisor</small></div>
+    </button>
+  </div>
+  ${notifyQueue.length > 0 ? `<button class="notify-badge-btn" data-notify>
+    <span class="notify-dot"></span> <b>${notifyQueue.length} Detected OS Transaction${notifyQueue.length > 1 ? 's' : ''}</b> — Review & Log
+  </button>` : ''}
+  <div class="actions-grid">${ACTION_ORDER.map((k, i) => {
     const t = TYPES[k];
     const dim = k === 'repay' && !outstanding;
     return `<button class="action ${dim ? 'dim' : ''}" data-t="${k}" style="--d:${i * 34}ms">
@@ -45,6 +63,15 @@ export function openActions() {
   const h = openSheet({
     title: 'What happened?', size: 'auto', body,
     onMount(sheet) {
+      sheet.querySelector('[data-upi]')?.addEventListener('click', () => {
+        haptic('tap'); h.close(); openUpiScanner();
+      });
+      sheet.querySelector('[data-ai]')?.addEventListener('click', () => {
+        haptic('tap'); h.close(); openAiCopilot();
+      });
+      sheet.querySelector('[data-notify]')?.addEventListener('click', () => {
+        haptic('tap'); h.close(); openNotificationReview();
+      });
       sheet.querySelectorAll('.action').forEach((b) =>
         b.addEventListener('click', () => {
           const t = b.dataset.t;
@@ -873,6 +900,395 @@ export function openOnboarding(onDone) {
         await St.setMeta('onboarded', true);
         handle.close();
         onDone?.();
+      });
+    },
+  });
+}
+
+/* ── UPI Payment Manager & Scanner ───────────────────────────────────────── */
+export function openUpiScanner(prefillUri = '') {
+  const parsed = prefillUri ? parseUpiUri(prefillUri) : { amountPaise: 0, payeeVpa: '', payeeName: '', note: '' };
+  const accounts = St.spendAccounts();
+  const acc = accounts[0] || St.liveAccounts()[0];
+  if (!acc) { toast('Create a bank or UPI account first.'); return; }
+
+  const body = `<div class="upi-sheet">
+    <div class="upi-header">
+      <div class="upi-logo-box">${icon('qr', 'tone-good')}</div>
+      <h2>UPI Payment Manager</h2>
+      <p>Scan a merchant QR code or enter VPA to invoke GPay, PhonePe, Paytm or CRED and auto-log your ledger.</p>
+    </div>
+    <div class="upi-actions">
+      <button class="btn btn-outline full scan-trig" data-scan>${icon('qr')} Scan QR via Camera / ML Kit</button>
+    </div>
+    <div class="upi-form">
+      <label class="field field-input">
+        <span class="field-label">Payee VPA / UPI ID</span>
+        <input class="field-text vpa-inp" placeholder="merchant@okhdfcbank or upi://pay?..." value="${esc(parsed.payeeVpa || prefillUri)}">
+      </label>
+      <label class="field field-input">
+        <span class="field-label">Payee Name</span>
+        <input class="field-text name-inp" placeholder="Swiggy, Coffee Shop, Raj..." value="${esc(parsed.payeeName)}">
+      </label>
+      <label class="field field-input">
+        <span class="field-label">Amount (₹)</span>
+        <input class="field-text num amt-inp" inputmode="decimal" placeholder="0.00" value="${parsed.amountPaise ? (parsed.amountPaise/100).toFixed(2) : ''}">
+      </label>
+      <label class="field field-input">
+        <span class="field-label">Note / Reference</span>
+        <input class="field-text note-inp" placeholder="Dinner, cab, bill pay..." value="${esc(parsed.note)}">
+      </label>
+    </div>
+  </div>`;
+
+  const actions = `<button class="btn btn-primary full pay-btn" data-pay>${icon('out')} Pay & Record via System UPI</button>`;
+
+  const h = openSheet({
+    title: 'Scan & Pay (UPI)', size: 'tall', body, actions,
+    onMount(sheet, handle) {
+      const vpaInp = sheet.querySelector('.vpa-inp');
+      const nameInp = sheet.querySelector('.name-inp');
+      const amtInp = sheet.querySelector('.amt-inp');
+      const noteInp = sheet.querySelector('.note-inp');
+
+      vpaInp.addEventListener('input', () => {
+        const val = vpaInp.value.trim();
+        if (val.startsWith('upi://')) {
+          const res = parseUpiUri(val);
+          if (res.valid) {
+            vpaInp.value = res.payeeVpa;
+            if (res.payeeName) nameInp.value = res.payeeName;
+            if (res.amountPaise > 0) amtInp.value = (res.amountPaise / 100).toFixed(2);
+            if (res.note) noteInp.value = res.note;
+            haptic('success');
+          }
+        }
+      });
+
+      sheet.querySelector('[data-scan]').addEventListener('click', () => {
+        haptic('tap');
+        toast('Opening QR Scanner...');
+        scanUpiQr((res) => {
+          if (res.valid) {
+            vpaInp.value = res.payeeVpa;
+            nameInp.value = res.payeeName;
+            if (res.amountPaise > 0) amtInp.value = (res.amountPaise / 100).toFixed(2);
+            if (res.note) noteInp.value = res.note;
+            haptic('success');
+            toast(`Scanned: ${res.payeeName}`);
+          } else {
+            toast(res.error || 'Could not parse QR', { tone: 'bad' });
+          }
+        }, (err) => {
+          toast(err, { tone: 'bad', dur: 4000 });
+        });
+      });
+
+      sheet.querySelector('[data-pay]').addEventListener('click', async () => {
+        const vpa = vpaInp.value.trim();
+        const name = nameInp.value.trim() || vpa.split('@')[0] || 'UPI Payee';
+        const amtStr = amtInp.value.trim();
+        const note = noteInp.value.trim() || `Paid to ${name}`;
+        const amountPaise = parseAmount(amtStr || '0');
+
+        if (!vpa || !vpa.includes('@')) { toast('Enter a valid UPI ID (VPA).', { tone: 'bad' }); return; }
+        if (!amountPaise || amountPaise <= 0) { toast('Enter a positive amount to pay.', { tone: 'bad' }); return; }
+
+        haptic('success');
+        const uri = buildUpiUri({ payeeVpa: vpa, payeeName: name, amountPaise, note });
+
+        try {
+          // Immediately record transaction in ledger before launching app switch
+          await St.saveTxn({
+            id: uid(),
+            type: 'spend',
+            amount: amountPaise,
+            account: acc.id,
+            date: Date.now(),
+            note: `${name}${note !== `Paid to ${name}` ? ` — ${note}` : ''}`,
+            category: 'General',
+          });
+          toast(`₹${(amountPaise/100).toFixed(2)} logged to ${acc.name}! Launching payment...`, { tone: 'good' });
+          handle.close();
+          await launchUpiIntent(uri);
+        } catch (e) {
+          toast(`Payment Error: ${e.message}`, { tone: 'bad' });
+        }
+      });
+    },
+  });
+}
+
+/* ── OpenRouter AI Copilot & Advisor ──────────────────────────────────────── */
+export function openAiCopilot() {
+  const cfg = getAiConfig();
+  const body = `<div class="ai-sheet">
+    <div class="ai-header">
+      <div class="ai-badge-top">${icon('spark', 'tone-accent')} Powered by OpenRouter API (Lightweight & Free)</div>
+      <h2>Fin AI Assistant</h2>
+      <p>Natural language bookkeeping and diagnostic advice without float drift or cloud dependency.</p>
+    </div>
+    <div class="ai-actions-row">
+      <button class="btn btn-outline ai-action-btn" data-diag>${icon('trend')} Vitality Checkup</button>
+      <button class="btn btn-outline ai-action-btn" data-cfg>${icon('gear')} AI Settings</button>
+    </div>
+    <div class="ai-chat-section">
+      <div class="ai-output" id="ai-messages">
+        <div class="ai-msg bot">👋 I am your Fin AI Copilot. Type or speak natural language like <i>"spent 450 at Swiggy for lunch and received 15000 freelance deposit"</i> to auto-parse & record movements!</div>
+      </div>
+      <div class="ai-input-wrap">
+        <textarea class="field-text ai-input" rows="2" placeholder="Tell me what you spent, received, or lent..."></textarea>
+        <button class="btn btn-primary ai-submit" data-parse>${icon('plus')} Parse & Propose</button>
+      </div>
+      <div class="ai-proposals" id="ai-proposals"></div>
+    </div>
+  </div>`;
+
+  const h = openSheet({
+    title: 'AI Copilot', size: 'tall', body,
+    onMount(sheet, handle) {
+      const msgBox = sheet.querySelector('#ai-messages');
+      const propBox = sheet.querySelector('#ai-proposals');
+      const input = sheet.querySelector('.ai-input');
+
+      sheet.querySelector('[data-cfg]').addEventListener('click', () => {
+        haptic('tap'); handle.close(); openAiSettings();
+      });
+
+      sheet.querySelector('[data-diag]').addEventListener('click', async () => {
+        haptic('tap');
+        msgBox.innerHTML += `<div class="ai-msg bot loading">⏳ Running financial vitality scan...</div>`;
+        msgBox.scrollTop = msgBox.scrollHeight;
+        const stats = {
+          available: totals(S.accounts).available,
+          savings: totals(S.accounts).savings,
+          safeToSpendDaily: St.safeToSpendNow().dailyRunRate,
+          monthIn: S.txns.filter(t => t.type === 'receive' && monthKey(t.date) === monthKey(Date.now())).reduce((s,t)=>s+t.amount,0),
+          monthOut: S.txns.filter(t => t.type === 'spend' && monthKey(t.date) === monthKey(Date.now())).reduce((s,t)=>s+t.amount,0),
+          healthScore: St.vitalityDiagnosis().score,
+          healthStatus: St.vitalityDiagnosis().status,
+        };
+        const bullets = await getAiFinancialAdvice(stats);
+        msgBox.querySelector('.loading')?.remove();
+        msgBox.innerHTML += `<div class="ai-msg bot diag">${bullets.map(b => `<p>• ${esc(b)}</p>`).join('')}</div>`;
+        msgBox.scrollTop = msgBox.scrollHeight;
+      });
+
+      sheet.querySelector('[data-parse]').addEventListener('click', async () => {
+        const text = input.value.trim();
+        if (!text) { toast('Please type some spend or receive text first.'); return; }
+        haptic('tap');
+        msgBox.innerHTML += `<div class="ai-msg user">${esc(text)}</div>`;
+        input.value = '';
+        msgBox.scrollTop = msgBox.scrollHeight;
+
+        const proposals = await parseChatToLedger(text, S.categories);
+        if (!proposals || !proposals.length) {
+          msgBox.innerHTML += `<div class="ai-msg bot warn">Could not detect amounts and action types. Try specifying an amount like "₹350 for cab".</div>`;
+          return;
+        }
+
+        propBox.innerHTML = `<div class="proposals-list">
+          <h3>Proposed Ledger Movements (${proposals.length})</h3>
+          ${proposals.map((p, idx) => `<div class="prop-card">
+            <span class="prop-type tag-${p.type}">${p.type.toUpperCase()}</span>
+            <b>₹${(p.amountPaise / 100).toFixed(2)}</b>
+            <span>${esc(p.note)} (${esc(p.category)})</span>
+          </div>`).join('')}
+          <button class="btn btn-primary full log-all-btn" data-logall>Confirm & Log All (1-Tap)</button>
+        </div>`;
+        propBox.scrollTop = propBox.scrollHeight;
+
+        propBox.querySelector('[data-logall]').addEventListener('click', async () => {
+          haptic('success');
+          const defaultAcc = St.spendAccounts()[0] || St.liveAccounts()[0];
+          for (const p of proposals) {
+            await St.saveTxn({
+              id: uid(),
+              type: p.type,
+              amount: p.amountPaise,
+              account: defaultAcc.id,
+              date: Date.now(),
+              note: p.note,
+              category: p.category,
+            });
+          }
+          toast(`Successfully recorded ${proposals.length} transactions!`, { tone: 'good' });
+          handle.close();
+        });
+      });
+    },
+  });
+}
+
+/* ── OpenRouter AI Configuration Sheet ────────────────────────────────────── */
+export function openAiSettings() {
+  const cfg = getAiConfig();
+  const body = `<div class="cfg-sheet">
+    <div class="ai-header">
+      <div class="ai-logo-box">${icon('spark', 'tone-accent')}</div>
+      <h2>OpenRouter AI Integration</h2>
+      <p>Connect your free OpenRouter API key to power intelligent conversational bookkeeping and deep diagnostic checkups.</p>
+    </div>
+    <div class="cfg-form">
+      <label class="field field-input">
+        <span class="field-label">OpenRouter API Key</span>
+        <input class="field-text key-inp" type="password" placeholder="sk-or-v1-..." value="${esc(cfg.apiKey)}">
+      </label>
+      <p class="cfg-hint">Don't have a key? Get one totally free in seconds at <a href="https://openrouter.ai" target="_blank">openrouter.ai</a>. No credit card required!</p>
+      <label class="field field-input">
+        <span class="field-label">Model (Defaulting to Fast Free Models)</span>
+        <input class="field-text model-inp" placeholder="meta-llama/llama-3.2-3b-instruct:free" value="${esc(cfg.model)}">
+      </label>
+      <label class="toggle-row">
+        <span>Enable AI Processing & Smart Auto-Tagging</span>
+        <input type="checkbox" class="enable-chk" ${cfg.enabled ? 'checked' : ''}>
+      </label>
+    </div>
+  </div>`;
+  const actions = `<button class="btn btn-primary full save-cfg-btn" data-save>Save AI Configuration</button>`;
+  openSheet({
+    title: 'AI Settings', size: 'auto', body, actions,
+    onMount(sheet, handle) {
+      sheet.querySelector('[data-save]').addEventListener('click', () => {
+        haptic('success');
+        const apiKey = sheet.querySelector('.key-inp').value.trim();
+        const model = sheet.querySelector('.model-inp').value.trim() || 'meta-llama/llama-3.2-3b-instruct:free';
+        const enabled = sheet.querySelector('.enable-chk').checked;
+        setAiConfig({ apiKey, model, enabled });
+        toast('OpenRouter configuration updated.', { tone: 'good' });
+        handle.close();
+      });
+    },
+  });
+}
+
+/* ── Selective Notification Automation Hub & Review Queue ───────────────── */
+export function openNotificationReview() {
+  const queue = getNotificationQueue();
+  if (!queue.length) {
+    toast('No pending OS notifications to review.', { tone: 'good' });
+    return;
+  }
+  const accs = St.spendAccounts();
+  const defaultAcc = accs[0] || St.liveAccounts()[0];
+
+  const body = `<div class="notify-review-sheet">
+    <div class="notify-header">
+      <h2>Detected OS Transactions (${queue.length})</h2>
+      <p>Intercepted from your authorized payment & banking apps via Android Notification Listener.</p>
+    </div>
+    <div class="notify-list">${queue.map((item) => `<div class="notify-card" data-id="${item.id}">
+      <div class="notify-card-head">
+        <span class="app-badge">${esc(item.sourceAppName)}</span>
+        <span class="notify-time">${new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+      </div>
+      <div class="notify-card-main">
+        <span class="notify-amt tag-${item.type}">${item.type === 'receive' ? '+' : '-'} ₹${(item.amountPaise/100).toFixed(2)}</span>
+        <b>${esc(item.merchant)}</b>
+      </div>
+      <p class="notify-raw">${esc(item.rawText)}</p>
+      <div class="notify-card-btns">
+        <button class="btn btn-small btn-outline dismiss-btn" data-del="${item.id}">Dismiss</button>
+        <button class="btn btn-small btn-primary log-btn" data-log="${item.id}">Log to Ledger</button>
+      </div>
+    </div>`).join('')}</div>
+  </div>`;
+
+  const actions = `<button class="btn btn-primary full log-all-notify" data-all>Confirm & Log All (${queue.length})</button>
+  <button class="btn btn-outline full clear-all-notify" data-clear>Dismiss All</button>`;
+
+  const h = openSheet({
+    title: 'OS Automation Queue', size: 'tall', body, actions,
+    onMount(sheet, handle) {
+      sheet.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', (e) => {
+        haptic('tap');
+        removeFromQueue(b.dataset.del);
+        b.closest('.notify-card')?.remove();
+        if (getNotificationQueue().length === 0) handle.close();
+      }));
+
+      sheet.querySelectorAll('[data-log]').forEach((b) => b.addEventListener('click', async (e) => {
+        haptic('success');
+        const id = b.dataset.log;
+        const item = getNotificationQueue().find((i) => i.id === id);
+        if (item && defaultAcc) {
+          await St.saveTxn({
+            id: uid(),
+            type: item.type,
+            amount: item.amountPaise,
+            account: defaultAcc.id,
+            date: item.timestamp,
+            note: item.note,
+            category: 'General',
+          });
+          toast(`Logged ₹${(item.amountPaise/100).toFixed(2)} (${item.merchant})`, { tone: 'good' });
+          removeFromQueue(id);
+          b.closest('.notify-card')?.remove();
+          if (getNotificationQueue().length === 0) handle.close();
+        }
+      }));
+
+      sheet.querySelector('[data-all]').addEventListener('click', async () => {
+        haptic('success');
+        const q = getNotificationQueue();
+        if (!defaultAcc) { toast('No bank account found.', { tone: 'bad' }); return; }
+        for (const item of q) {
+          await St.saveTxn({
+            id: uid(),
+            type: item.type,
+            amount: item.amountPaise,
+            account: defaultAcc.id,
+            date: item.timestamp,
+            note: item.note,
+            category: 'General',
+          });
+        }
+        clearNotificationQueue();
+        toast(`Logged ${q.length} transactions from OS notifications!`, { tone: 'good' });
+        handle.close();
+      });
+
+      sheet.querySelector('[data-clear]').addEventListener('click', () => {
+        haptic('light');
+        clearNotificationQueue();
+        toast('Cleared notification review queue.');
+        handle.close();
+      });
+    },
+  });
+}
+
+export function openAutomationSettings() {
+  const selected = getMonitoredApps();
+  const body = `<div class="auto-sheet">
+    <div class="auto-header">
+      <h2>Selective OS App Monitoring</h2>
+      <p>Select which installed payment, banking, and SMS applications Fin is allowed to inspect for automatic transaction reading. Your privacy is paramount—unselected apps are strictly ignored by the OS service.</p>
+    </div>
+    <div class="app-checklist">
+      ${POPULAR_FINANCE_APPS.map((app) => {
+        const checked = selected.includes(app.id);
+        return `<label class="app-row">
+          <div class="app-info">
+            <b>${esc(app.name)}</b>
+            <small>${esc(app.id)}</small>
+          </div>
+          <input type="checkbox" class="app-chk" value="${esc(app.id)}" ${checked ? 'checked' : ''}>
+        </label>`;
+      }).join('')}
+    </div>
+  </div>`;
+  const actions = `<button class="btn btn-primary full save-auto-btn" data-saveauto>Save Monitored Apps</button>`;
+  openSheet({
+    title: 'Notification Access', size: 'tall', body, actions,
+    onMount(sheet, handle) {
+      sheet.querySelector('[data-saveauto]').addEventListener('click', () => {
+        haptic('success');
+        const chks = [...sheet.querySelectorAll('.app-chk:checked')].map((c) => c.value);
+        setMonitoredApps(chks);
+        toast(`Updated! Now monitoring ${chks.length} apps.`, { tone: 'good' });
+        handle.close();
       });
     },
   });

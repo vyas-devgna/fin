@@ -17,7 +17,7 @@
 
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/icon-192.png" sizes="192x192" type="image/png">
-<link rel="icon" href="icons/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="icons/logo.svg" type="image/svg+xml">
 
 <!-- Premium Custom Typography -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -27,6 +27,21 @@
 <link rel="stylesheet" href="app.css">
 </head>
 <body class="booting">
+
+<!-- Rendered opaque from the very first paint when the lock is on, so balances
+     are never briefly visible behind it. app.js removes `armed` after unlock. -->
+<div id="lock" class="lock" hidden>
+  <div class="lock-inner">
+    <div class="lock-mark" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M6 11h12a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1ZM8 11V7.5a4 4 0 1 1 8 0V11"/>
+      </svg>
+    </div>
+    <h1>Fin is locked</h1>
+    <p id="lock-msg">Verify to continue</p>
+    <button id="lock-btn" class="btn btn-primary">Unlock</button>
+  </div>
+</div>
 
 <main id="app" role="main"></main>
 

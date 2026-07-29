@@ -6,7 +6,10 @@
  * ledger can change.
  */
 import * as db from './db.js';
-import { uid, dueOccurrences, monthKey, parseAmount } from './core.js';
+import {
+  uid, dueOccurrences, monthKey, parseAmount,
+  totals, budgetStatus, goalProgress, categoryBreakdown,
+} from './core.js';
 
 export const S = {
   accounts: [], txns: [], debts: [], goals: [], budgets: [], categories: [], recurring: [],
@@ -48,6 +51,10 @@ export async function load() {
   const data = await db.loadAll();
   Object.assign(S, data);
   S.meta.currency ??= '₹';
+  // Meta is a flat key/value store; these two are rehydrated onto S so callers
+  // read them from one place rather than reaching into meta.
+  S.aiFacts = S.meta.aiFacts || [];
+  S.meta.routingRules ??= { vendors: {}, categories: {}, amounts: [] };
   if (!S.accounts.length && !S.meta.onboarded) await seed();
   S.accounts.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
   sortTxns();
@@ -209,6 +216,77 @@ export async function reorderAccounts(ids) {
   S.accounts.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
   await db.putMany('accounts', S.accounts);
   emit('accounts');
+}
+
+/* ── Read models for the AI layer ─────────────────────────────────────────────
+ * ai.js must never reach into S directly or recompute money maths of its own —
+ * it would drift from the ledger the first time either side changed. These are
+ * the only shapes it is allowed to see.
+ */
+
+export const snapshot = () => totals(liveAccounts(), S.txns, S.debts);
+export const budgetState = (b, m = monthKey(Date.now())) => budgetStatus(b, S.txns, m);
+export const goalState = (g) => goalProgress(g, S.txns);
+
+/** Spending by category for a month, richest first, already named. */
+export function topCategories(m = monthKey(Date.now()), limit = 8) {
+  return categoryBreakdown(S.txns, m).slice(0, limit).map((c) => ({
+    ...c,
+    name: category(c.category)?.name || 'Uncategorised',
+  }));
+}
+
+/* ── AI memory ────────────────────────────────────────────────────────────────
+ * Durable facts the assistant has been told or has inferred and you confirmed.
+ * Kept small and inspectable on purpose: an assistant whose memory you cannot
+ * read or delete is one you stop trusting.
+ */
+export async function rememberFact(text, source = 'chat') {
+  const clean = String(text).trim().slice(0, 240);
+  if (!clean) return null;
+  S.aiFacts ??= [];
+  if (S.aiFacts.some((f) => f.text.toLowerCase() === clean.toLowerCase())) return null;
+  const fact = { id: uid(), text: clean, source, at: Date.now() };
+  S.aiFacts.push(fact);
+  // Bounded: the context block is rebuilt on every call and tokens are not free.
+  if (S.aiFacts.length > 60) S.aiFacts = S.aiFacts.slice(-60);
+  await setMeta('aiFacts', S.aiFacts);
+  return fact;
+}
+
+export async function forgetFact(id) {
+  S.aiFacts = (S.aiFacts || []).filter((f) => f.id !== id);
+  await setMeta('aiFacts', S.aiFacts);
+}
+
+export const aiFacts = () => S.aiFacts || [];
+
+/* ── UPI routing rules ────────────────────────────────────────────────────────
+ * Precedence is fixed and deliberate: a rule you set for one shop must beat a
+ * rule you set for a whole category, or the specific setting would be useless.
+ *   vendor  >  category  >  amount band  >  default
+ */
+export function resolveUpiApp({ vpa, categoryId, amount } = {}) {
+  const r = S.meta.routingRules || {};
+  const key = (vpa || '').toLowerCase().trim();
+  if (key && r.vendors?.[key]) return { pkg: r.vendors[key], why: 'this payee' };
+  if (categoryId && r.categories?.[categoryId]) {
+    return { pkg: r.categories[categoryId], why: category(categoryId)?.name || 'category' };
+  }
+  for (const band of r.amounts || []) {
+    if (amount >= (band.min ?? 0) && amount <= (band.max ?? Infinity)) {
+      return { pkg: band.pkg, why: `amounts in this range` };
+    }
+  }
+  return S.meta.defaultUpiApp ? { pkg: S.meta.defaultUpiApp, why: 'your default app' } : { pkg: null, why: 'no rule set' };
+}
+
+export async function setRoutingRule(kind, key, pkg) {
+  const r = { vendors: {}, categories: {}, amounts: [], ...(S.meta.routingRules || {}) };
+  if (kind === 'vendor') r.vendors[String(key).toLowerCase().trim()] = pkg;
+  else if (kind === 'category') r.categories[key] = pkg;
+  await setMeta('routingRules', r);
+  return r;
 }
 
 /* ── Recurring ────────────────────────────────────────────────────────────────

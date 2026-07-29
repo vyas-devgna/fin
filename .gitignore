@@ -2,3 +2,7 @@ node_modules/
 *.log
 .DS_Store
 Thumbs.db
+
+# Real API key. Never commit — this repository is public and bots scrape it.
+secrets.js
+

@@ -72,6 +72,7 @@ const P = {
   archive: 'M4 8h16M5 8V6a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v2M6 8v11a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V8M10 12h4',
   pie: 'M12 3v9h9a9 9 0 1 1-9-9Z|M21 12a9 9 0 0 0-9-9v9h9Z',
   wave: 'M3 12c2.5-5 5-5 7.5 0s5 5 7.5 0M3 17c2.5-5 5-5 7.5 0',
+  qr: 'M3 3h6v6H3V3Zm2 2v2h2V5H5Zm8-2h6v6h-6V3Zm2 2v2h2V5h-2ZM3 13h6v6H3v-6Zm2 2v2h2v-2H5Zm11 0h2v2h-2v-2Zm-3-2h2v2h-2v-2Zm6 0h2v4h-4v-2h2v-2Zm-2 4h2v2h-2v-2Zm-4 0h2v2h-2v-2Z',
 };
 
 export function icon(name, cls = '') {

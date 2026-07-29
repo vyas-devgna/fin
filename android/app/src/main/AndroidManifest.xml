@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+    <uses-permission android:name="android.permission.USE_FINGERPRINT" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+
+    <!-- SMS harvesting. This is a personal side-loaded build, never Play-distributed,
+         so the Play SMS policy restriction does not apply. Both are needed:
+         RECEIVE_SMS for live broadcasts, READ_SMS for back-filling the inbox. -->
+    <uses-permission android:name="android.permission.RECEIVE_SMS" />
+    <uses-permission android:name="android.permission.READ_SMS" />
+
+    <!-- Personal side-loaded build. Play Store restricts this permission to
+         launchers/antivirus, which does not apply here. Without it, package
+         detection only sees apps hardcoded in <queries> below — which silently
+         missed Kotak 811, Kotak Neo and Navi on this device. This makes any bank
+         or UPI app installed in future detectable with no list to maintain. -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:ignore="QueryAllPackagesPermission" />
+
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+
+    <!-- Android 11+ filters package visibility by default. Without these, both
+         queryIntentActivities() and a directed setPackage() intent silently find
+         nothing, which is why app routing could never work. The scheme <intent>
+         covers UPI apps generally; the explicit <package> entries guarantee the
+         ones we route to by name are resolvable. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="upi" />
+        </intent>
+
+        <package android:name="com.google.android.apps.nbu.paisa.user" />  <!-- Google Pay -->
+        <package android:name="com.phonepe.app" />
+        <package android:name="net.one97.paytm" />
+        <package android:name="in.org.npci.upiapp" />                      <!-- BHIM -->
+        <package android:name="in.amazon.mShop.android.shopping" />        <!-- Amazon Pay -->
+        <package android:name="com.dreamplug.androidapp" />                <!-- CRED -->
+        <package android:name="com.whatsapp" />
+        <package android:name="com.samsung.android.spay" />                <!-- Samsung Pay -->
+        <package android:name="com.mobikwik_new" />
+        <package android:name="com.freecharge.android" />
+        <package android:name="com.snapwork.hdfc" />                       <!-- HDFC -->
+        <package android:name="com.sbi.lotusintouch" />                    <!-- YONO SBI -->
+        <package android:name="com.csam.icici.bank.imobile" />             <!-- ICICI -->
+        <package android:name="com.msf.kbank.mobile" />                    <!-- Kotak -->
+        <package android:name="com.axis.mobile" />
+        <package android:name="com.bankofbaroda.mconnect" />
+        <package android:name="com.google.android.apps.messaging" />
+        <package android:name="com.samsung.android.messaging" />
+    </queries>
+
+    <application
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:windowSoftInputMode="adjustResize"
+        android:theme="@style/Theme.Fin">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:configChanges="orientation|screenSize|keyboardHidden">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
+        </activity>
+
+        <service
+            android:name=".FinNotificationListener"
+            android:label="Fin transaction monitor"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
+        <!-- Priority 999 so bank SMS is seen before any app that might abort the
+             broadcast. This receiver never aborts it. -->
+        <receiver
+            android:name=".FinSmsReceiver"
+            android:exported="true"
+            android:permission="android.permission.BROADCAST_SMS">
+            <intent-filter android:priority="999">
+                <action android:name="android.provider.Telephony.SMS_RECEIVED" />
+            </intent-filter>
+        </receiver>
+    </application>
+
+</manifest>

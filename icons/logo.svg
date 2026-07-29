@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <!-- Bowl: cyan at the top shoulder falling to deep blue at the foot -->
+    <linearGradient id="bowl" x1="0.62" y1="0.05" x2="0.30" y2="0.95">
+      <stop offset="0%"   stop-color="#2BE8DE"/>
+      <stop offset="34%"  stop-color="#22B8F0"/>
+      <stop offset="70%"  stop-color="#2C5BE8"/>
+      <stop offset="100%" stop-color="#2C2FC8"/>
+    </linearGradient>
+    <!-- Descender: violet into magenta -->
+    <linearGradient id="stem" x1="0.5" y1="0" x2="0.35" y2="1">
+      <stop offset="0%"   stop-color="#8B5CF6"/>
+      <stop offset="55%"  stop-color="#B04CF0"/>
+      <stop offset="100%" stop-color="#F45BE0"/>
+    </linearGradient>
+    <linearGradient id="field" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%"   stop-color="#12132A"/>
+      <stop offset="55%"  stop-color="#0B0C1C"/>
+      <stop offset="100%" stop-color="#07070F"/>
+    </linearGradient>
+    <!-- Inner shadow where the counter cuts into the bowl -->
+    <linearGradient id="counterShade" x1="0" y1="0" x2="0.3" y2="1">
+      <stop offset="0%" stop-color="#1B2A6B" stop-opacity="0.95"/>
+      <stop offset="100%" stop-color="#0B0C1C" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="512" height="512" rx="118" fill="url(#field)"/>
+
+  <!-- P bowl, drawn as an outer shape with the counter punched out by fill-rule -->
+  <path fill="url(#bowl)" fill-rule="evenodd" d="
+    M188 96 h124 c92 0 160 70 160 160 s-68 160 -160 160 h-124 z
+    M262 176 h44 c46 0 80 34 80 80 s-34 80 -80 80 h-44 z"/>
+
+  <!-- Soft shading inside the counter so the bowl reads as raised -->
+  <path fill="url(#counterShade)" d="M262 176 h44 c46 0 80 34 80 80 s-34 80 -80 80 h-44 z"/>
+
+  <!-- Angled descender: the stroke of the P, sheared toward the foot -->
+  <path fill="url(#stem)" d="M188 266 h84 l-58 150 h-84 z"/>
+
+  <!-- QR framing brackets, sitting in the counter -->
+  <g stroke="#FFFFFF" stroke-width="17" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <path d="M286 214 h-22 a10 10 0 0 0 -10 10 v22"/>
+    <path d="M330 214 h22 a10 10 0 0 1 10 10 v22"/>
+    <path d="M286 298 h-22 a10 10 0 0 1 -10 -10 v-22"/>
+    <path d="M330 298 h22 a10 10 0 0 0 10 -10 v-22"/>
+  </g>
+  <rect x="295" y="243" width="26" height="26" rx="7" fill="#FFFFFF"/>
+</svg>

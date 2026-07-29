@@ -1114,6 +1114,36 @@ svg.ico { width: 22px; height: 22px; flex: none; }
 
 .version { text-align: center; font-size: 12px; color: var(--text-3); margin-top: 26px; }
 
+/* ── Lock shield ──────────────────────────────────────────────────────────────
+ * Fully opaque, not translucent: a frosted blur over a balance is still a
+ * readable balance to a camera. */
+.lock {
+  position: fixed; inset: 0; z-index: 900;
+  display: grid; place-items: center;
+  background: var(--bg);
+  transition: opacity .42s var(--ease), transform .42s var(--ease);
+}
+.lock[hidden] { display: none; }
+.lock.away { opacity: 0; transform: scale(1.04); pointer-events: none; }
+body.locked-shield #app, body.locked-shield #tabbar { visibility: hidden; }
+
+.lock-inner { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 32px; text-align: center; }
+.lock-mark {
+  width: 66px; height: 66px; border-radius: 22px; display: grid; place-items: center;
+  background: var(--tint-soft); color: var(--tint); margin-bottom: 16px;
+  animation: pop .6s var(--spring) backwards .1s;
+}
+.lock-mark svg { width: 32px; height: 32px; }
+.lock h1 { font-size: 23px; font-weight: 680; letter-spacing: -.03em; }
+.lock p { font-size: 14.5px; color: var(--text-2); max-width: 30ch; }
+.lock .btn { margin-top: 20px; min-width: 190px; }
+.lock.denied .lock-mark { animation: shake .45s var(--ease); color: var(--red); background: color-mix(in srgb, var(--red) 14%, transparent); }
+@keyframes shake {
+  0%,100% { transform: translateX(0); }
+  20% { transform: translateX(-9px); } 40% { transform: translateX(8px); }
+  60% { transform: translateX(-5px); } 80% { transform: translateX(3px); }
+}
+
 /* ── Accessibility ────────────────────────────────────────────────────────── */
 :focus-visible { outline: 2.5px solid var(--tint); outline-offset: 2px; border-radius: 8px; }
 
@@ -1135,3 +1165,67 @@ svg.ico { width: 22px; height: 22px; flex: none; }
   #app { padding-inline: 24px; }
   .stats { grid-template-columns: repeat(4, 1fr); }
 }
+
+/* ── AI Copilot, UPI Scanner & OS Automation Styles ───────────────────────── */
+.ai-chat-box {
+  display: flex; flex-direction: column; gap: 10px; max-height: 42vh;
+  overflow-y: auto; padding: 12px; border-radius: 18px;
+  background: color-mix(in srgb, var(--bg-2) 65%, transparent);
+  border: .5px solid var(--line-2); margin-bottom: 8px;
+}
+.ai-message {
+  display: inline-block; max-width: 85%; padding: 10px 14px;
+  border-radius: 18px; font-size: 14.5px; line-height: 1.4;
+  word-wrap: break-word; animation: popIn .25s var(--spring);
+}
+.ai-message.ai {
+  align-self: flex-start; background: var(--card-solid);
+  border: .5px solid var(--line); color: var(--text);
+  border-bottom-left-radius: 4px; box-shadow: var(--shadow-s);
+}
+.ai-message.user {
+  align-self: flex-end; background: var(--tint); color: #fff;
+  border-bottom-right-radius: 4px; font-weight: 500;
+}
+.ai-input-row { display: flex; gap: 8px; align-items: center; }
+.ai-input-row .fld { flex: 1; margin-bottom: 0; }
+.ai-send-btn, .ai-action-btn { flex: none; display: flex; align-items: center; justify-content: center; gap: 6px; }
+.ai-chips-wrap {
+  display: flex; flex-wrap: wrap; gap: 8px; max-height: 280px; overflow-y: auto; padding: 4px 0;
+}
+.ai-chip {
+  padding: 6px 12px; border-radius: 14px; font-size: 13px; font-weight: 520;
+  background: color-mix(in srgb, var(--tint) 12%, transparent);
+  color: var(--tint); border: .5px solid color-mix(in srgb, var(--tint) 25%, transparent);
+  cursor: pointer; transition: all var(--fast) var(--ease);
+}
+.ai-chip:hover { background: var(--tint); color: #fff; transform: translateY(-1px); }
+.ai-chip:active { transform: scale(.95); }
+.ai-insight-card {
+  padding: 16px; border-radius: 20px; background: linear-gradient(135deg, color-mix(in srgb, var(--tint) 15%, var(--card)) 0%, var(--card) 100%);
+  border: .5px solid color-mix(in srgb, var(--tint) 30%, var(--line)); margin-bottom: 12px;
+}
+.ai-insight-card h4 { display: flex; align-items: center; gap: 8px; font-size: 15.5px; font-weight: 650; margin-bottom: 8px; color: var(--text); }
+
+.upi-camera-wrap {
+  position: relative; width: 100%; aspect-ratio: 1 / 1; max-height: 320px;
+  border-radius: 24px; overflow: hidden; background: #000;
+  border: 2px solid var(--tint); box-shadow: var(--shadow-m);
+  display: grid; place-items: center; margin: 0 auto;
+}
+.upi-video { width: 100%; height: 100%; object-fit: cover; }
+.upi-scanner-overlay {
+  position: absolute; inset: 20%; border: 2px dashed rgba(255, 255, 255, 0.75);
+  border-radius: 16px; pointer-events: none; animation: pulse 2s infinite ease-in-out;
+}
+@keyframes pulse { 0%, 100% { opacity: .5; transform: scale(.98); } 50% { opacity: 1; transform: scale(1.02); } }
+
+.app-select-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 16px; border-bottom: .5px solid var(--line); width: 100%; background: transparent;
+}
+.app-select-row:last-child { border-bottom: none; }
+.app-select-info { display: flex; flex-direction: column; gap: 2px; text-align: left; }
+.app-select-info b { font-size: 15px; font-weight: 580; color: var(--text); }
+.app-select-info small { font-size: 12px; color: var(--text-2); font-family: monospace; }
+

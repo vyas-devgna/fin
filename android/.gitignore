@@ -1,0 +1,23 @@
+*.iml
+.gradle
+/local.properties
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+
+# Per-module build output — /build only covers the root project.
+app/build/
+*.apk
+*.aab
+
+# Web bundle is copied in by Gradle from the repo root at build time.
+app/src/main/assets/www/

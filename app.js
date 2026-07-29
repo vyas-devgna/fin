@@ -18,10 +18,12 @@ import {
   safeToSpend, financialHealth, recurringRadar,
 } from './core.js';
 import { areaChart, hydrateArea, pairedBars, ring, donut, stackBar, sparkline } from './charts.js';
+import * as Native from './native.js';
+import * as Ai from './ai.js';
 import {
   openActions, openComposer, openAccountEditor, openBudgetEditor, openGoalEditor,
   openCategoryEditor, openTxnDetail, openDebtDetail, openOnboarding, deleteWithUndo,
-  openDatePicker,
+  openDatePicker, openUpiScanner, openAiCopilot, openAiSettings, openNotificationReview, openAutomationSettings,
 } from './sheets.js';
 
 const TABS = [
@@ -746,6 +748,18 @@ function Settings() {
   const days = St.daysSinceBackup();
   return `
   ${header('Settings', { back: true })}
+  <section class="block"><div class="block-head"><h3>Android OS & AI Automation</h3></div>
+    <div class="card list">
+      <button class="row row-tap" data-open-upi><span class="row-face">${icon('qr')}</span>
+        <span class="row-main"><b>UPI Payment Manager</b><small>Scan QR codes and invoke system apps</small></span>${icon('chevron')}</button>
+      <button class="row row-tap" data-open-auto><span class="row-face">${icon('trend')}</span>
+        <span class="row-main"><b>Selective OS Notification Access</b><small>Configure monitored payment & SMS apps</small></span>${icon('chevron')}</button>
+      <button class="row row-tap" data-open-aicfg><span class="row-face">${icon('spark')}</span>
+        <span class="row-main"><b>OpenRouter AI Advisor</b><small>Free intelligent financial copilot</small></span>${icon('chevron')}</button>
+      <button class="row row-tap" data-biometric-lock><span class="row-face">${icon('lock')}</span>
+        <span class="row-main"><b>Biometric Security</b><small>Require fingerprint/face on launch</small></span>${icon('chevron')}</button>
+    </div>
+  </section>
   <section class="block"><div class="block-head"><h3>Your data</h3></div>
     <div class="card list">
       <button class="row row-tap" data-export><span class="row-face">${icon('down2')}</span>
@@ -939,6 +953,17 @@ function parseFinal(text) {
 }
 
 function bindSettings(root) {
+  $('[data-open-upi]', root)?.addEventListener('click', () => openUpiScanner());
+  $('[data-open-auto]', root)?.addEventListener('click', () => openAutomationSettings());
+  $('[data-open-aicfg]', root)?.addEventListener('click', () => openAiSettings());
+  $('[data-biometric-lock]', root)?.addEventListener('click', () => {
+    haptic('tap');
+    if (window.FinNative && typeof window.FinNative.requestBiometricLock === 'function') {
+      window.FinNative.requestBiometricLock();
+    } else {
+      toast('Biometric hardware authentication active in native Android app only.');
+    }
+  });
   $('[data-export]', root)?.addEventListener('click', exportBackup);
   $('[data-import]', root)?.addEventListener('click', () => pickFile('.json', importBackup));
   $('[data-csv]', root)?.addEventListener('click', () => pickFile('.csv,text/csv', async (file) => {
@@ -1062,6 +1087,67 @@ function applyTheme() {
   $('meta[name="theme-color"]').setAttribute('content', dark ? '#000000' : '#F6F6F8');
 }
 
+/* ── Lock shield ──────────────────────────────────────────────────────────────
+ * Holds until native authentication actually reports back. The old build never
+ * received that callback, so this is the half that was missing.
+ */
+async function runLockShield() {
+  const shield = $('#lock');
+  const msg = $('#lock-msg');
+  const btn = $('#lock-btn');
+  shield.hidden = false;
+  document.body.classList.add('locked-shield');
+
+  for (;;) {
+    btn.disabled = true;
+    msg.textContent = 'Verify to continue';
+    const { ok, reason } = await Native.unlock();
+    if (ok) {
+      shield.classList.add('away');
+      document.body.classList.remove('locked-shield');
+      setTimeout(() => { shield.hidden = true; shield.classList.remove('away'); }, 440);
+      return;
+    }
+    // Failed or cancelled: stay locked, offer a retry. Never fall through.
+    shield.classList.add('denied');
+    msg.textContent = reason === 'cancelled' ? 'Cancelled. Tap to try again.'
+      : reason === 'timeout' ? 'Timed out. Tap to try again.'
+      : `Not verified — ${reason || 'try again'}`;
+    btn.disabled = false;
+    Native.haptic(40);
+    await new Promise((r) => btn.addEventListener('click', r, { once: true }));
+    shield.classList.remove('denied');
+  }
+}
+
+/** Native events that must reach the UI wherever it is. */
+function wireNativeEvents() {
+  Native.on('capture', () => render());
+
+  // Hardware back: close a sheet, else step back a screen, else let Android exit.
+  Native.on('back', () => {
+    if (anySheetOpen()) { closeTopSheet(); return true; }
+    if (view.name !== 'home') { go('home', null, { back: true }); return true; }
+    return false;
+  });
+
+  Native.on('quick', (a) => {
+    if (a === 'scan') openActions();
+    else if (TYPES[a]) openComposer({ type: a });
+  });
+
+  Native.on('resume', async () => {
+    const made = await St.runRecurring();
+    if (made.length) render();
+    const pending = Native.drainCaptureQueue();
+    if (pending.length) {
+      toast(`${pending.length} transaction${pending.length > 1 ? 's' : ''} detected`, {
+        action: 'Review', ms: 7000, onAction: () => go('activity'),
+      });
+    }
+  });
+}
+
 /* ── Boot ─────────────────────────────────────────────────────────────────── */
 
 async function boot() {
@@ -1073,21 +1159,53 @@ async function boot() {
   $$('.tab', bar).forEach((b) => b.addEventListener('click', () => { haptic('tap'); go(b.dataset.tab); }));
   $('#fab').addEventListener('click', () => { haptic('tap'); openActions(); });
 
+  Native.install();
+  Ai.bindStore(St);
+
   await St.load();
   applyTheme();
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
+
+  // Gate the whole app before anything renders. `booting` already hides #app,
+  // so nothing sensitive has painted at this point.
+  if (S.meta.lockEnabled && Native.isNative()) await runLockShield();
+
+  wireNativeEvents();
+  Native.profileDevice().then((p) => p && console.info('[fin] device profiled', p));
 
   St.subscribe(() => render());
   history.replaceState({ name: 'home', param: null }, '', '');
   render();
   document.body.classList.remove('booting');
 
-  // Home-screen shortcuts (manifest "shortcuts") arrive as ?do=spend
-  const shortcut = new URLSearchParams(location.search).get('do');
-  if (shortcut && TYPES[shortcut]) {
+  // Home-screen shortcuts (manifest "shortcuts" or native Android shortcuts)
+  const shortcut = new URLSearchParams(location.search).get('do') || new URLSearchParams(location.search).get('action');
+  if (shortcut === 'upi') {
+    history.replaceState({ name: 'home', param: null }, '', location.pathname);
+    setTimeout(() => openUpiScanner(), 260);
+  } else if (shortcut === 'ai') {
+    history.replaceState({ name: 'home', param: null }, '', location.pathname);
+    setTimeout(() => openAiCopilot(), 260);
+  } else if (shortcut && TYPES[shortcut]) {
     history.replaceState({ name: 'home', param: null }, '', location.pathname);
     setTimeout(() => openComposer({ type: shortcut }), 260);
   } else if (!S.meta.onboarded && !S.txns.length) setTimeout(() => openOnboarding(render), 420);
+
+  /* Register two-way bridge with Android native OS */
+  window.FinApp = window.FinApp || {};
+  window.FinApp.onNotificationReceived = async (txnProposal) => {
+    const { addToNotificationQueue } = await import('./automation.js');
+    addToNotificationQueue(txnProposal);
+    render();
+    toast(`⚡ Detected payment: ₹${(txnProposal.amountPaise/100).toFixed(2)} at ${txnProposal.merchant}`, {
+      action: 'Review', onAction: () => openNotificationReview(), ms: 7000, tone: 'good'
+    });
+  };
+  window.FinApp.quickAction = (action) => {
+    if (action === 'upi') openUpiScanner();
+    else if (action === 'ai') openAiCopilot();
+    else if (action === 'expense') openComposer({ type: 'spend' });
+  };
   if (S.meta.pendingRecurring) {
     toast(`${S.meta.pendingRecurring} repeating ${S.meta.pendingRecurring === 1 ? 'entry was' : 'entries were'} added.`, { action: 'See', onAction: () => go('activity') });
     S.meta.pendingRecurring = 0;

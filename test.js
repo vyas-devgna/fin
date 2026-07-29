@@ -8,6 +8,9 @@ import {
   monthKey, monthBounds, addMonths, lastMonths, categoryBreakdown, monthlyFlow,
   safeToSpend, financialHealth, recurringRadar,
 } from './core.js';
+import { parseUpiUri, buildUpiUri } from './upi.js';
+import { parseOfflineHeuristic } from './ai.js';
+import { parseNotificationText } from './automation.js';
 
 let n = 0;
 const test = (name, fn) => { fn(); n++; process.stdout.write(`  ✓ ${name}\n`); };
@@ -342,6 +345,39 @@ test('recurringRadar projects monthly automated commitments', () => {
   const r = recurringRadar(rec);
   assert.equal(r.count, 2);
   assert.equal(r.monthlySpend, R(12000) + R(4330));
+});
+
+test('UPI Intent URI parses cleanly and formats back to exact integer paise without float drift', () => {
+  const u = parseUpiUri('upi://pay?pa=merchant@okaxis&pn=Coffee%20Shop&am=180.50&cu=INR&tn=Latte');
+  assert.equal(u.valid, true);
+  assert.equal(u.payeeVpa, 'merchant@okaxis');
+  assert.equal(u.amountPaise, 18050);
+  assert.equal(u.note, 'Latte');
+  const re = buildUpiUri({ payeeVpa: u.payeeVpa, payeeName: u.payeeName, amountPaise: 18050, note: u.note });
+  assert.ok(re.includes('am=180.50'));
+});
+
+test('SMS and bank notifications parse amounts, merchant names and debit/credit direction accurately', () => {
+  const t1 = parseNotificationText('com.phonepe.app', 'Rs. 1,250.00 debited from bank account XX4567 to SWIGGY STORES via UPI Ref 41928372.');
+  assert.equal(t1.type, 'spend');
+  assert.equal(t1.amountPaise, 125000);
+  assert.equal(t1.merchant, 'SWIGGY STORES');
+  assert.equal(t1.sourceAppName, 'PhonePe');
+
+  const t2 = parseNotificationText('com.snapwork.hdfc', 'INR 45,000.00 credited to account XX0192 from Client Corp on 29-Jul.');
+  assert.equal(t2.type, 'receive');
+  assert.equal(t2.amountPaise, 4500000);
+});
+
+test('OpenRouter AI fallback heuristics parse conversational financial movements offline', () => {
+  const res = parseOfflineHeuristic('spent 450 on Zomato lunch', [{ name: 'Food' }, { name: 'Groceries' }]);
+  assert.equal(res.length, 1);
+  assert.equal(res[0].type, 'spend');
+  assert.equal(res[0].amountPaise, 45000);
+
+  const res2 = parseOfflineHeuristic('received 15000 salary deposit', []);
+  assert.equal(res2[0].type, 'receive');
+  assert.equal(res2[0].amountPaise, 1500000);
 });
 
 console.log(`\n${n} checks passed — the ledger is honest.\n`);
