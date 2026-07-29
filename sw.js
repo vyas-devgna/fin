@@ -7,7 +7,7 @@
  * Note the app's data is NOT here — that lives in IndexedDB and is never
  * touched by cache eviction.
  */
-const CACHE = 'fin-v1';
+const CACHE = 'fin-v2';
 const SHELL = [
   './', './index.html', './app.css',
   './app.js', './core.js', './db.js', './store.js', './ui.js', './sheets.js', './charts.js',
@@ -38,6 +38,18 @@ self.addEventListener('fetch', (e) => {
   const { request } = e;
   if (request.method !== 'GET') return;
   const url = new URL(request.url);
+  if (url.origin === 'https://fonts.googleapis.com' || url.origin === 'https://fonts.gstatic.com') {
+    e.respondWith(
+      caches.match(request).then((hit) => hit || fetch(request).then((res) => {
+        if (res.ok) {
+          const copy = res.clone();
+          caches.open(CACHE).then((c) => c.put(request, copy));
+        }
+        return res;
+      }).catch(() => hit))
+    );
+    return;
+  }
   if (url.origin !== location.origin) return;
 
   // Navigations: try the network first so a deployed update is picked up

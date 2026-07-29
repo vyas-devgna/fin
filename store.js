@@ -123,7 +123,7 @@ export async function deleteTxn(id) {
   const removed = { txn: t, debt: null, repayments: [] };
   await db.del('txns', id);
 
-  if ((t.type === 'lend' || t.type === 'borrow') && t.debtId) {
+  if ((t.type === 'lend' || t.type === 'borrow' || t.type === 'receivable') && t.debtId) {
     const di = S.debts.findIndex((d) => d.id === t.debtId);
     if (di >= 0) {
       removed.debt = S.debts.splice(di, 1)[0];
@@ -156,14 +156,16 @@ export async function addDebt({ person, direction, amount, account: acc, note, d
   const d = { id: uid(), person: person.trim(), direction, principal: amount, note: note || '', dueDate: dueDate || null, createdAt: Date.now(), date: date || Date.now() };
   S.debts.push(d);
   await db.put('debts', d);
-  await addTxn({ type: direction === 'lent' ? 'lend' : 'borrow', amount, account: acc, debtId: d.id, person: d.person, note, date: date || Date.now() });
+  const txnType = direction === 'lent' ? 'lend' : direction === 'receivable' ? 'receivable' : 'borrow';
+  await addTxn({ type: txnType, amount, account: acc, debtId: d.id, person: d.person, note, date: date || Date.now() });
   return d;
 }
 
 export async function repay({ debtId, amount, account: acc, note, date }) {
   const d = debt(debtId);
   if (!d) return;
-  return addTxn({ type: 'repay', amount, account: acc, debtId, dir: d.direction === 'lent' ? 'in' : 'out', person: d.person, note, date: date || Date.now() });
+  const dir = (d.direction === 'lent' || d.direction === 'receivable') ? 'in' : 'out';
+  return addTxn({ type: 'repay', amount, account: acc, debtId, dir, person: d.person, note, date: date || Date.now() });
 }
 
 export async function updateDebt(id, patch) {

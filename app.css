@@ -30,9 +30,13 @@
   --line-2: rgba(10, 10, 25, .045);
   --ring-track: rgba(10, 10, 25, .08);
   --shadow-s: 0 1px 2px rgba(12, 12, 25, .05), 0 4px 12px rgba(12, 12, 25, .045);
-  --shadow-m: 0 2px 6px rgba(12, 12, 25, .06), 0 12px 32px rgba(12, 12, 25, .09);
-  --shadow-l: 0 8px 24px rgba(12, 12, 25, .1), 0 32px 64px rgba(12, 12, 25, .16);
-  --blur: saturate(180%) blur(24px);
+  --shadow-m: 0 4px 12px rgba(12, 12, 25, .08), 0 16px 36px rgba(12, 12, 25, .11);
+  --shadow-l: 0 8px 24px rgba(12, 12, 25, .12), 0 32px 64px rgba(12, 12, 25, .18);
+  --blur: saturate(200%) blur(28px);
+
+  /* Typography */
+  --font-body: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  --font-head: "Outfit", -apple-system, BlinkMacSystemFont, "SF Pro Display", system-ui, sans-serif;
 
   /* One curve for movement, one for springy affordances. */
   --ease: cubic-bezier(.32, .72, 0, 1);
@@ -42,9 +46,9 @@
   --slow: .52s;
 
   --gutter: 18px;
-  --radius: 22px;
-  --radius-s: 14px;
-  --tabbar-h: 60px;
+  --radius: 24px;
+  --radius-s: 16px;
+  --tabbar-h: 62px;
 }
 
 :root[data-theme="dark"], :root:not([data-theme="light"]) {
@@ -96,7 +100,7 @@
 html, body { height: 100%; overscroll-behavior-y: none; }
 
 body {
-  font: 400 16px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", Roboto, system-ui, sans-serif;
+  font: 400 16px/1.45 var(--font-body);
   color: var(--text);
   background: var(--bg);
   -webkit-font-smoothing: antialiased;
@@ -122,7 +126,8 @@ body.booting #app { opacity: 0; }
 button, input, select, textarea { font: inherit; color: inherit; }
 button { background: none; border: 0; padding: 0; cursor: pointer; color: inherit; }
 button:disabled { cursor: default; }
-h1, h2, h3, h4 { font-weight: 640; letter-spacing: -.022em; line-height: 1.15; }
+h1, h2, h3, h4 { font-family: var(--font-head); font-weight: 700; letter-spacing: -.025em; line-height: 1.15; }
+.hero-amount, .detail-amt, .debt-amt, .stat-value { font-family: var(--font-head); }
 svg.ico { width: 22px; height: 22px; flex: none; }
 
 ::-webkit-scrollbar { width: 0; height: 0; }
@@ -242,6 +247,169 @@ svg.ico { width: 22px; height: 22px; flex: none; }
 .tone-green .stat-ico { background: color-mix(in srgb, var(--green) 14%, transparent); color: var(--green); }
 .tone-orange .stat-ico { background: color-mix(in srgb, var(--orange) 15%, transparent); color: var(--orange); }
 .tone-indigo .stat-ico { background: color-mix(in srgb, var(--indigo) 14%, transparent); color: var(--indigo); }
+
+/* ── Safe-to-Spend & Financial Vitality (iOS Premium Custom Widgets) ─────── */
+.radar-card, .health-card {
+  padding: 20px;
+  border-radius: var(--radius);
+  margin-top: 12px;
+  margin-bottom: var(--gutter);
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: linear-gradient(135deg, var(--card), color-mix(in srgb, var(--tint) 9%, var(--card)));
+  box-shadow: var(--shadow-m), 0 4px 24px var(--tint-soft);
+  cursor: pointer;
+  transition: transform var(--fast) var(--spring), box-shadow var(--fast) var(--ease);
+}
+.radar-card:active, .health-card:active {
+  transform: scale(0.976);
+}
+.radar-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.radar-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-head);
+  font-size: 13.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-2);
+}
+.radar-badge svg {
+  color: var(--tint);
+}
+.radar-days {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--line);
+  color: var(--text-2);
+}
+.radar-main {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+}
+.radar-val b {
+  font-family: var(--font-head);
+  font-size: 34px;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  line-height: 1;
+  color: var(--text);
+}
+.radar-val small {
+  font-size: 15px;
+  color: var(--text-3);
+  margin-left: 3px;
+  font-weight: 500;
+}
+.radar-meta {
+  text-align: right;
+  font-size: 13px;
+}
+.radar-meta div {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 3px;
+}
+.radar-meta small {
+  color: var(--text-3);
+}
+.radar-meta span {
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* Vitality Card */
+.health-card {
+  background: linear-gradient(145deg, var(--card), color-mix(in srgb, var(--green) 8%, var(--card)));
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  margin-top: 0;
+}
+.health-header {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  margin-bottom: 18px;
+}
+.health-score-ring {
+  position: relative;
+  width: 76px;
+  height: 76px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.health-score-ring svg {
+  position: absolute;
+  inset: 0;
+}
+.health-num {
+  font-family: var(--font-head);
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  color: var(--text);
+  z-index: 1;
+}
+.health-info {
+  flex: 1;
+}
+.health-status {
+  display: inline-block;
+  font-family: var(--font-head);
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+.health-desc {
+  font-size: 13px;
+  color: var(--text-2);
+  line-height: 1.35;
+  margin: 0;
+}
+.health-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+}
+.health-stat {
+  display: flex;
+  flex-direction: column;
+  background: var(--line-2);
+  padding: 10px 14px;
+  border-radius: var(--radius-s);
+  border: 1px solid var(--line-2);
+}
+.health-stat span {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-3);
+  margin-bottom: 2px;
+}
+.health-stat b {
+  font-family: var(--font-head);
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text);
+}
 
 /* ── Today ────────────────────────────────────────────────────────────────── */
 .today { margin-top: 10px; padding: 14px 16px; border-radius: 18px; }
@@ -577,14 +745,17 @@ svg.ico { width: 22px; height: 22px; flex: none; }
 
 .mini-head { font-size: 13px; color: var(--text-2); font-weight: 600; margin: 18px 0 6px; }
 
-/* ── Tab bar ──────────────────────────────────────────────────────────────── */
+/* ── Tab bar (iOS Floating Translucent Island) ────────────────────────────── */
 #tabbar {
   position: fixed; left: 50%; transform: translateX(-50%);
-  bottom: calc(env(safe-area-inset-bottom) + 10px);
-  width: min(calc(100% - 24px), 460px); height: var(--tabbar-h);
+  bottom: calc(env(safe-area-inset-bottom) + 12px);
+  width: min(calc(100% - 28px), 460px); height: var(--tabbar-h);
   display: flex; align-items: center; z-index: 60;
-  background: var(--card); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
-  border: .5px solid var(--line); border-radius: 26px; box-shadow: var(--shadow-m);
+  background: color-mix(in srgb, var(--card) 86%, transparent);
+  backdrop-filter: saturate(220%) blur(32px); -webkit-backdrop-filter: saturate(220%) blur(32px);
+  border: .5px solid rgba(255, 255, 255, .24);
+  border-radius: 32px;
+  box-shadow: 0 10px 36px rgba(0, 0, 0, .15), var(--shadow-m);
   padding: 0 6px;
 }
 .tab {
@@ -592,17 +763,17 @@ svg.ico { width: 22px; height: 22px; flex: none; }
   justify-content: center; gap: 2px; color: var(--text-3); position: relative; z-index: 2;
   transition: color var(--base) var(--ease), transform var(--fast) var(--spring);
 }
-.tab span { font-size: 10px; font-weight: 550; letter-spacing: -.005em; }
+.tab span { font-size: 10.5px; font-weight: 600; letter-spacing: -.005em; font-family: var(--font-head); }
 .tab .ico { width: 21px; height: 21px; transition: transform var(--base) var(--spring); }
 .tab.on { color: var(--tint); }
-.tab.on .ico { transform: translateY(-1px) scale(1.06); }
+.tab.on .ico { transform: translateY(-1px) scale(1.08); }
 .tab:active { transform: scale(.92); }
 
 /* The highlight slides between tabs rather than appearing under each one. */
 .tab-pill {
   position: absolute; z-index: 1; top: 6px; bottom: 6px;
   width: calc((100% - 12px) / 5); left: 6px;
-  border-radius: 20px; background: var(--tint-soft);
+  border-radius: 22px; background: var(--tint-soft);
   transform: translateX(calc(var(--i) * 100%));
   transition: transform .42s var(--spring), opacity var(--base);
   opacity: 1;
@@ -611,11 +782,12 @@ svg.ico { width: 22px; height: 22px; flex: none; }
 
 .fab {
   position: fixed; right: 20px;
-  bottom: calc(env(safe-area-inset-bottom) + var(--tabbar-h) + 22px);
+  bottom: calc(env(safe-area-inset-bottom) + var(--tabbar-h) + 24px);
   width: 56px; height: 56px; border-radius: 20px; z-index: 55;
   display: grid; place-items: center; color: #fff;
-  background: linear-gradient(160deg, color-mix(in srgb, var(--tint) 88%, white), var(--tint));
-  box-shadow: 0 6px 18px color-mix(in srgb, var(--tint) 42%, transparent), var(--shadow-m);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--tint) 85%, white), var(--tint));
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--tint) 48%, transparent), var(--shadow-m);
+  border: .5px solid rgba(255, 255, 255, .3);
   transition: transform var(--base) var(--spring), box-shadow var(--base);
 }
 .fab .ico { width: 26px; height: 26px; stroke-width: 2.3; }

@@ -25,9 +25,10 @@ export const TYPES = {
   transfer: { label: 'Transfer', verb: 'Moved',     dir: 'move', tone: 'move',  icon: 'arrows',      hint: 'Between your accounts' },
   save:     { label: 'Save',     verb: 'Saved',     dir: 'move', tone: 'save',  icon: 'shield',      hint: 'Set money aside' },
   withdraw: { label: 'Withdraw', verb: 'Withdrew',  dir: 'move', tone: 'move',  icon: 'shield-off',  hint: 'Take back from savings' },
-  borrow:   { label: 'Borrow',   verb: 'Borrowed',  dir: 'in',   tone: 'owe',   icon: 'hand-in',     hint: 'You took money from someone' },
-  lend:     { label: 'Lend',     verb: 'Lent',      dir: 'out',  tone: 'due',   icon: 'hand-out',    hint: 'You gave money to someone' },
-  repay:    { label: 'Repay',    verb: 'Repaid',    dir: 'both', tone: 'settle',icon: 'check',       hint: 'Settle a debt, fully or partly' },
+  borrow:     { label: 'Borrow',     verb: 'Borrowed',    dir: 'in',   tone: 'owe',    icon: 'hand-in',     hint: 'You took money from someone' },
+  lend:       { label: 'Lend',       verb: 'Lent',        dir: 'out',  tone: 'due',    icon: 'hand-out',    hint: 'You gave money to someone' },
+  repay:      { label: 'Repay',      verb: 'Repaid',      dir: 'both', tone: 'settle', icon: 'check',       hint: 'Settle a debt, fully or partly' },
+  receivable: { label: 'Receivable', verb: 'Billed',      dir: 'in',   tone: 'due',    icon: 'note',        hint: 'Future or pending income for provided services' },
 };
 
 /* The single source of truth for what a transaction does to account balances.
@@ -51,6 +52,9 @@ export function effects(t) {
       // dir 'in'  = someone repaid you   → money arrives
       // dir 'out' = you repaid someone   → money leaves
       return [{ account: t.account, delta: t.dir === 'in' ? a : -a }];
+    case 'receivable':
+      // Future or pending income billed for services; does not affect liquid cash until collected via repay.
+      return [];
     default:
       return [];
   }
@@ -59,7 +63,7 @@ export function effects(t) {
 /* True when the transaction changes net worth (as opposed to just relocating
  * money). Transfers/saves/withdrawals move money without creating or destroying
  * any, so they must be excluded from income-vs-spending maths. */
-export const isNetChange = (t) => t.type !== 'transfer' && t.type !== 'save' && t.type !== 'withdraw';
+export const isNetChange = (t) => t.type !== 'transfer' && t.type !== 'save' && t.type !== 'withdraw' && t.type !== 'receivable';
 
 /* ── Balances ─────────────────────────────────────────────────────────────── */
 
@@ -84,14 +88,22 @@ export function totals(accounts, txns, debts) {
     total += b;
     if (a.kind === 'savings') savings += b; else available += b;
   }
-  let owedToYou = 0, youOwe = 0;
+  let owedToYou = 0, youOwe = 0, receivables = 0, lent = 0;
   for (const d of debts) {
     const out = debtOutstanding(d, txns);
     if (out <= 0) continue;
-    if (d.direction === 'lent') owedToYou += out; else youOwe += out;
+    if (d.direction === 'receivable') {
+      receivables += out;
+      owedToYou += out;
+    } else if (d.direction === 'lent') {
+      lent += out;
+      owedToYou += out;
+    } else {
+      youOwe += out;
+    }
   }
-  // Net worth counts what you're owed as an asset and what you owe as a liability.
-  return { total, available, savings, owedToYou, youOwe, net: total + owedToYou - youOwe, balances: bal };
+  // Net worth counts what you're owed (loans + service receivables) as assets and what you owe as liabilities.
+  return { total, available, savings, owedToYou, youOwe, receivables, lent, net: total + owedToYou - youOwe, balances: bal };
 }
 
 /* ── Debts (borrowing & lending) ──────────────────────────────────────────── */
@@ -346,6 +358,87 @@ export function categoryBreakdown(txns, mKey) {
     m.set(k, (m.get(k) || 0) + t.amount);
   }
   return [...m.entries()].map(([category, amount]) => ({ category, amount })).sort((a, b) => b.amount - a.amount);
+}
+
+/* ── Advanced Financial Engines ────────────────────────────────────────────── */
+
+/** Safe-to-Spend: Daily allowance for the remainder of the month without dipping into savings or violating budgets. */
+export function safeToSpend(accounts, txns, budgets, recurring, mKey = monthKey(Date.now()), now = Date.now()) {
+  const [start, end] = monthBounds(mKey);
+  const daysLeft = Math.max(1, Math.ceil((end - now) / 86400000));
+  let totalBudget = 0, spentBudget = 0;
+  for (const b of budgets) {
+    totalBudget += int(b.amount);
+    spentBudget += budgetSpent(b, txns, mKey);
+  }
+  const budgetLeft = Math.max(0, totalBudget - spentBudget);
+  
+  let upcomingOutflow = 0;
+  for (const r of recurring || []) {
+    if (r.paused || r.template?.type !== 'spend') continue;
+    let t = r.nextAt;
+    while (t < end && t >= now) {
+      upcomingOutflow += int(r.template.amount);
+      t = nextDue(r, t);
+    }
+  }
+
+  const bal = balances(accounts, txns);
+  let spendableCash = 0;
+  for (const a of accounts) if (!a.archived && a.kind !== 'savings') spendableCash += Math.max(0, bal.get(a.id) || 0);
+
+  const allowance = totalBudget > 0 ? Math.max(0, budgetLeft - upcomingOutflow) : Math.max(0, spendableCash - upcomingOutflow);
+  const daily = Math.floor(allowance / daysLeft);
+  return { allowance, daily, daysLeft, upcomingOutflow, usingBudget: totalBudget > 0 };
+}
+
+/** Financial Health & Emergency Runway calculation. */
+export function financialHealth(accounts, txns, debts, mKey = monthKey(Date.now())) {
+  const t = totals(accounts, txns, debts);
+  const months = lastMonths(6, mKey);
+  const flow = monthlyFlow(txns, months);
+  const totalSpend = flow.spend.reduce((s, v) => s + v, 0);
+  const activeMonths = flow.spend.filter((v) => v > 0).length || 1;
+  const avgSpend = Math.round(totalSpend / activeMonths);
+  
+  const totalIncome = flow.income.reduce((s, v) => s + v, 0);
+  const savingsRate = totalIncome > 0 ? Math.max(0, Math.round(((totalIncome - totalSpend) / totalIncome) * 100)) : 0;
+  
+  const runway = avgSpend > 0 ? Number(((t.total) / avgSpend).toFixed(1)) : (t.total > 0 ? 99 : 0);
+  
+  let score = 50;
+  if (runway >= 6) score += 25;
+  else if (runway >= 3) score += 15;
+  else if (runway >= 1) score += 5;
+  if (savingsRate >= 25) score += 25;
+  else if (savingsRate >= 15) score += 15;
+  else if (savingsRate > 0) score += 5;
+  if (t.youOwe > t.total && t.total > 0) score = Math.max(10, score - 20);
+
+  let status = 'Caution: Lean Buffer';
+  if (score >= 85) status = 'Fortress Reserve';
+  else if (score >= 70) status = 'Strong Resilience';
+  else if (score >= 55) status = 'Stable Standpoint';
+  
+  return { runway, avgSpend, savingsRate, score: Math.min(100, score), status };
+}
+
+/** Recurring Outflow & Fixed Burn Rate Radar. */
+export function recurringRadar(recurring, now = Date.now()) {
+  let monthlySpend = 0, monthlyReceive = 0, count = 0;
+  for (const r of recurring || []) {
+    if (r.paused) continue;
+    const amt = int(r.template?.amount || 0);
+    let mult = 1;
+    if (r.freq === 'day') mult = 30;
+    else if (r.freq === 'week') mult = 4.33;
+    else if (r.freq === 'year') mult = 0.0833;
+    
+    const monthlyEst = Math.round(amt * mult);
+    if (r.template?.type === 'spend') { monthlySpend += monthlyEst; count++; }
+    else if (r.template?.type === 'receive') { monthlyReceive += monthlyEst; count++; }
+  }
+  return { monthlySpend, monthlyReceive, net: monthlyReceive - monthlySpend, count };
 }
 
 export const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 9);

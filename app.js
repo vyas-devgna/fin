@@ -15,6 +15,7 @@ import {
   TYPES, totals, balances, monthKey, monthLabel, lastMonths, addMonths, relativeDay,
   budgetStatus, goalProgress, debtsByPerson, debtOutstanding, categoryBreakdown,
   monthlyFlow, balanceHistory, monthBounds, effects, isNetChange, fmt,
+  safeToSpend, financialHealth, recurringRadar,
 } from './core.js';
 import { areaChart, hydrateArea, pairedBars, ring, donut, stackBar, sparkline } from './charts.js';
 import {
@@ -211,6 +212,8 @@ function Home() {
   const recent = S.txns.slice(0, 7);
   const nudge = St.daysSinceBackup();
 
+  const sts = safeToSpend(St.liveAccounts(), S.txns, S.budgets, S.recurring, m, now);
+
   return `
   ${header(greeting(), {
     sub: new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long' }),
@@ -230,9 +233,23 @@ function Home() {
   <section class="stats">
     ${statCard('Available', t.available, 'wallet', 'tint', 'accounts')}
     ${statCard('Savings', t.savings, 'shield', 'indigo', 'accounts')}
-    ${statCard('Owed to you', t.owedToYou, 'handIn', 'green', 'debts')}
+    ${statCard(t.receivables > 0 ? 'Receivables & Owed' : 'Owed to you', t.owedToYou, 'handIn', 'green', 'debts')}
     ${statCard('You owe', t.youOwe, 'handOut', 'orange', 'debts')}
   </section>
+
+  ${(t.available > 0 || S.budgets.length > 0) ? `<section class="radar-card glass rise" data-go="budgets">
+    <div class="radar-top">
+      <span class="radar-badge tone-due">${icon(sts.perDay > 0 ? 'trend' : 'alert')} <b>Safe to Spend</b></span>
+      <span class="radar-days">${sts.daysLeft} days remaining</span>
+    </div>
+    <div class="radar-main">
+      <div class="radar-val"><b class="${sts.perDay <= 0 ? 'bad' : ''}">${esc($$$(sts.perDay))}</b><small>/ day</small></div>
+      <div class="radar-meta">
+        <div><small>Remaining Allowance</small><span>${esc($c(sts.allowance))}</span></div>
+        ${sts.upcomingOutflow > 0 ? `<div><small>Reserved Bills</small><span>${esc($c(sts.upcomingOutflow))}</span></div>` : ''}
+      </div>
+    </div>
+  </section>` : ''}
 
   ${today.length ? `<section class="today glass rise">
     <div class="today-head"><b>Today</b><small>${today.length} ${today.length === 1 ? 'movement' : 'movements'}</small></div>
@@ -354,12 +371,12 @@ function Accounts() {
     <div class="card list">${savings.map(accCard).join('')}</div></section>` : ''}
 
   ${groups.length ? `<section class="block">
-    <div class="block-head"><h3>People</h3></div>
+    <div class="block-head"><h3>Clients & People</h3></div>
     <div class="card list">${groups.map((g, i) => `
       <button class="row row-tap" data-person="${i}">
-        <span class="row-face ${g.direction === 'lent' ? 'tone-due' : 'tone-owe'}">${g.direction === 'lent' ? '↙' : '↗'}</span>
-        <span class="row-main"><b>${esc(g.person)}</b><small>${g.direction === 'lent' ? 'owes you' : 'you owe'}</small></span>
-        <span class="row-amt ${g.direction === 'lent' ? 'good' : 'bad'}">${esc($$$(g.outstanding))}</span>
+        <span class="row-face ${(g.direction === 'lent' || g.direction === 'receivable') ? 'tone-due' : 'tone-owe'}">${g.direction === 'lent' ? '↙' : g.direction === 'receivable' ? '📄' : '↗'}</span>
+        <span class="row-main"><b>${esc(g.person)}</b><small>${g.direction === 'lent' ? 'owes you' : g.direction === 'receivable' ? 'service receivable' : 'you owe'}</small></span>
+        <span class="row-amt ${(g.direction === 'lent' || g.direction === 'receivable') ? 'good' : 'bad'}">${esc($$$(g.outstanding))}</span>
       </button>`).join('')}</div>
   </section>` : ''}
 
@@ -644,9 +661,32 @@ function Insights() {
   });
   const avgSpend = Math.round(flow.spend.reduce((s, v) => s + v, 0) / Math.max(1, flow.spend.filter((v) => v > 0).length));
   const thisSpend = flow.spend[flow.spend.length - 1];
+  const health = financialHealth(St.liveAccounts(), S.txns, S.debts, m);
+  const radar = recurringRadar(S.recurring);
 
   return `
   ${header('Insights', { back: true, sub: monthLabel(m, true) })}
+
+  <section class="block"><div class="block-head"><h3>Financial Vitality</h3></div>
+    <div class="health-card glass rise">
+      <div class="health-header">
+        <div class="health-score-ring">
+          ${ring(health.score, { size: 76, stroke: 7, color: health.score >= 85 ? 'var(--good)' : health.score >= 55 ? 'var(--tint)' : 'var(--orange)' })}
+          <span class="health-num">${health.score}</span>
+        </div>
+        <div class="health-info">
+          <span class="health-status">${esc(health.status)}</span>
+          <p class="health-desc">Computed from emergency reserve runway, savings trajectory & asset liquidity.</p>
+        </div>
+      </div>
+      <div class="health-grid">
+        <div class="health-stat"><span>Runway</span><b>${health.runway === Infinity ? '36+ mos' : `${health.runway} mos`}</b></div>
+        <div class="health-stat"><span>Savings Rate</span><b>${health.savingsRate}%</b></div>
+        <div class="health-stat"><span>Net Worth</span><b>${esc($c(health.netWorth))}</b></div>
+        ${radar.count > 0 ? `<div class="health-stat"><span>Auto Outflow</span><b>${esc($c(radar.monthlySpend))}/mo</b></div>` : `<div class="health-stat"><span>Receivables</span><b>${esc($c(t.receivables))}</b></div>`}
+      </div>
+    </div>
+  </section>
 
   <section class="block"><div class="block-head"><h3>Income and spending</h3></div>
     <div class="card pad-card">

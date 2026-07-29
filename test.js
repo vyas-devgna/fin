@@ -6,6 +6,7 @@ import {
   effects, balances, totals, debtOutstanding, goalProgress, budgetStatus,
   parseAmount, fmt, fmtCompact, nextDue, dueOccurrences, balanceHistory,
   monthKey, monthBounds, addMonths, lastMonths, categoryBreakdown, monthlyFlow,
+  safeToSpend, financialHealth, recurringRadar,
 } from './core.js';
 
 let n = 0;
@@ -281,6 +282,66 @@ test('month keys and arithmetic wrap across years', () => {
   const [s, e] = monthBounds('2026-02');
   assert.equal(new Date(s).getDate(), 1);
   assert.equal((e - s) / 86400000, 28);
+});
+
+/* ── Receivables & Advanced Personal Finance Engines ─────────────────────── */
+
+test('receivable records future income without altering cash balance until collected', () => {
+  const accs = [{ id: 'bank', name: 'Bank', kind: 'spend', opening: R(10000) }];
+  const debts = [{ id: 'inv1', person: 'Acme Corp', direction: 'receivable', principal: R(25000), note: 'Consulting' }];
+  const txns = [{ id: '1', type: 'receivable', amount: R(25000), debtId: 'inv1', person: 'Acme Corp', date: Date.now() }];
+  
+  let t = totals(accs, txns, debts);
+  assert.equal(t.available, R(10000)); // Cash unaltered by future receivable
+  assert.equal(t.receivables, R(25000)); // Marked under service receivables
+  assert.equal(t.owedToYou, R(25000));
+  assert.equal(t.net, R(35000)); // Net worth includes earned pending receivables
+
+  // Now record partial collection of the receivable invoice
+  txns.push({ id: '2', type: 'repay', dir: 'in', amount: R(15000), account: 'bank', debtId: 'inv1', date: Date.now() });
+  t = totals(accs, txns, debts);
+  assert.equal(t.available, R(25000)); // Cash increased by collection
+  assert.equal(t.receivables, R(10000)); // Outstanding receivable decreased exactly
+  assert.equal(t.net, R(35000)); // Net worth conserved upon payment collection
+});
+
+test('safeToSpend computes daily run rate cleanly from remaining budgets and outflows', () => {
+  const accs = [{ id: 'bank', name: 'Bank', kind: 'spend', opening: R(30000) }];
+  const budgets = [{ id: 'b1', amount: R(15000), category: null }];
+  const txns = [{ id: 't1', type: 'spend', amount: R(3000), date: at(2026, 4, 5) }];
+  const recurring = [{ id: 'r1', freq: 'month', paused: false, nextAt: at(2026, 4, 25), template: { type: 'spend', amount: R(2000) } }];
+  
+  const sts = safeToSpend(accs, txns, budgets, recurring, '2026-04', at(2026, 4, 15));
+  assert.equal(sts.usingBudget, true);
+  assert.equal(sts.upcomingOutflow, R(2000));
+  // 15000 - 3000 (spent) - 2000 (upcoming recurring) = 10000 remaining allowance
+  assert.equal(sts.allowance, R(10000));
+});
+
+test('financialHealth accurately measures emergency runway and savings rate', () => {
+  const accs = [
+    { id: 'bank', name: 'Bank', kind: 'spend', opening: R(40000) },
+    { id: 'sav', name: 'Savings', kind: 'savings', opening: R(80000) }
+  ];
+  const txns = [
+    { id: '1', type: 'receive', amount: R(60000), account: 'bank', date: at(2026, 3, 1) },
+    { id: '2', type: 'spend', amount: R(30000), account: 'bank', date: at(2026, 3, 5) }
+  ];
+  const fh = financialHealth(accs, txns, [], '2026-03');
+  assert.equal(fh.savingsRate, 50); // Saved 30k out of 60k = 50%
+  // Total cash & reserves is 40k + 80k = 120k + 30k net = 150k. Burn is 30k. Runway = 5 months.
+  assert.equal(fh.runway, 5);
+  assert.equal(fh.status, 'Fortress Reserve');
+});
+
+test('recurringRadar projects monthly automated commitments', () => {
+  const rec = [
+    { id: '1', freq: 'month', paused: false, template: { type: 'spend', amount: R(12000) } },
+    { id: '2', freq: 'week', paused: false, template: { type: 'spend', amount: R(1000) } },
+  ];
+  const r = recurringRadar(rec);
+  assert.equal(r.count, 2);
+  assert.equal(r.monthlySpend, R(12000) + R(4330));
 });
 
 console.log(`\n${n} checks passed — the ledger is honest.\n`);

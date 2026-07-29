@@ -28,7 +28,7 @@ const fromISO = (s, keepTime = Date.now()) => {
 
 /* ── The action picker: the eight things money can do ─────────────────────── */
 
-const ACTION_ORDER = ['spend', 'receive', 'transfer', 'save', 'lend', 'borrow', 'repay', 'withdraw'];
+const ACTION_ORDER = ['spend', 'receive', 'receivable', 'transfer', 'save', 'lend', 'borrow', 'repay', 'withdraw'];
 
 export function openActions() {
   const outstanding = St.S.debts.filter((d) => debtOutstanding(d, S.txns) > 0).length;
@@ -56,7 +56,7 @@ export function openActions() {
   return h;
 }
 
-const iconFor = (t) => ({ receive: 'in', spend: 'out', transfer: 'move', save: 'shield', withdraw: 'shieldOff', borrow: 'handIn', lend: 'handOut', repay: 'check' }[t] || 'plus');
+const iconFor = (t) => ({ receive: 'in', spend: 'out', transfer: 'move', save: 'shield', withdraw: 'shieldOff', borrow: 'handIn', lend: 'handOut', repay: 'check', receivable: 'note' }[t] || 'plus');
 
 /* ── The composer ─────────────────────────────────────────────────────────────
  * One sheet handles all eight actions. The fields shown are derived from the
@@ -150,7 +150,7 @@ export function openComposer({ type, prefill = {}, editing = null }) {
         quick.querySelector('[data-clear]')?.addEventListener('click', () => { haptic('light'); st.raw = ''; paintAmount(); });
       }
 
-      const needsPerson = () => type === 'lend' || type === 'borrow';
+      const needsPerson = () => type === 'lend' || type === 'borrow' || type === 'receivable';
 
       /* ── Contextual fields ── */
       function row(key, label, value, sub) {
@@ -180,18 +180,21 @@ export function openComposer({ type, prefill = {}, editing = null }) {
           }
         } else if (needsPerson()) {
           html += `<label class="field field-input">
-            <span class="field-label">${type === 'lend' ? 'To whom' : 'From whom'}</span>
-            <input class="field-text" data-person list="people" placeholder="Name" value="${esc(st.person)}" autocomplete="off" enterkeyhint="done">
+            <span class="field-label">${type === 'lend' ? 'To whom' : type === 'receivable' ? 'Client / Payee' : 'From whom'}</span>
+            <input class="field-text" data-person list="people" placeholder="${type === 'receivable' ? 'Client Name' : 'Name'}" value="${esc(st.person)}" autocomplete="off" enterkeyhint="done">
           </label>`;
-          html += row('account', type === 'lend' ? 'From' : 'Into', accChip(st.account));
-          html += row('dueDate', 'Due back', st.dueDate ? esc(relativeDay(st.dueDate)) : '<span class="muted">Optional</span>');
+          if (type !== 'receivable') {
+            html += row('account', type === 'lend' ? 'From' : 'Into', accChip(st.account));
+          }
+          html += row('dueDate', type === 'receivable' ? 'Expected by' : 'Due back', st.dueDate ? esc(relativeDay(st.dueDate)) : '<span class="muted">Optional</span>');
         } else if (type === 'repay') {
           const d = St.debt(st.debtId);
+          const isLentOrRec = d?.direction === 'lent' || d?.direction === 'receivable';
           html += row('debt', 'Settle', d
-            ? `<span class="mini-acc"><i>${d.direction === 'lent' ? '↙' : '↗'}</i>${esc(d.person)}</span>`
+            ? `<span class="mini-acc"><i>${isLentOrRec ? '↙' : '↗'}</i>${esc(d.person)}</span>`
             : '<span class="muted">Choose</span>',
-            d ? `${d.direction === 'lent' ? 'owes you' : 'you owe'} ${$$$(debtOutstanding(d, S.txns))}` : '');
-          html += row('account', d?.direction === 'lent' ? 'Into' : 'From', accChip(st.account));
+            d ? `${d.direction === 'lent' ? 'owes you' : d.direction === 'receivable' ? 'pending payment' : 'you owe'} ${$$$(debtOutstanding(d, S.txns))}` : '');
+          html += row('account', isLentOrRec ? 'Into' : 'From', accChip(st.account));
         }
         html += row('date', 'When', esc(relativeDay(st.date)));
         html += `<label class="field field-input">
@@ -265,8 +268,8 @@ export function openComposer({ type, prefill = {}, editing = null }) {
           pickSheet({
             title: 'Which debt',
             items: openDebts.map((d) => ({
-              id: d.id, label: d.person, emoji: d.direction === 'lent' ? '↙️' : '↗️',
-              sub: `${d.direction === 'lent' ? 'owes you' : 'you owe'} ${$$$(d.outstanding)}`, selected: st.debtId === d.id,
+              id: d.id, label: d.person, emoji: (d.direction === 'lent' || d.direction === 'receivable') ? '↙️' : '↗️',
+              sub: `${d.direction === 'lent' ? 'owes you' : d.direction === 'receivable' ? 'pending payment' : 'you owe'} ${$$$(d.outstanding)}`, selected: st.debtId === d.id,
             })),
             onPick(id) {
               st.debtId = id;
@@ -349,9 +352,9 @@ export function openComposer({ type, prefill = {}, editing = null }) {
           return;
         }
 
-        if (type === 'lend' || type === 'borrow') {
+        if (type === 'lend' || type === 'borrow' || type === 'receivable') {
           await St.addDebt({
-            person: st.person, direction: type === 'lend' ? 'lent' : 'borrowed',
+            person: st.person, direction: type === 'lend' ? 'lent' : type === 'receivable' ? 'receivable' : 'borrowed',
             amount: amt, account: st.account, note: st.note.trim(), dueDate: st.dueDate, date: st.date,
           });
         } else if (type === 'repay') {
@@ -733,7 +736,7 @@ export function openTxnDetail(t, onChange) {
   const acc = St.account(t.account), to = St.account(t.to), cat = St.category(t.category), g = St.goal(t.goalId);
   const rows = [
     ['Amount', $$$(t.amount)],
-    [t.type === 'receive' || t.type === 'borrow' ? 'Into' : 'From', acc ? `${acc.icon || ''} ${esc(acc.name)}` : '—'],
+    [t.type === 'receive' || t.type === 'borrow' || t.type === 'repay' ? 'Into' : t.type === 'receivable' ? 'Expected' : 'From', acc ? `${acc.icon || ''} ${esc(acc.name)}` : '—'],
     to && ['To', `${to.icon || ''} ${esc(to.name)}`],
     cat && ['Category', `${cat.emoji} ${esc(cat.name)}`],
     g && ['Goal', `${g.emoji || '🎯'} ${esc(g.name)}`],
@@ -754,7 +757,7 @@ export function openTxnDetail(t, onChange) {
       <dl class="detail-rows">${rows.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${v}</dd></div>`).join('')}</dl>
       <div class="detail-acts">
         <button class="btn btn-ghost" data-repeat>${icon('repeat')} Do it again</button>
-        ${t.type !== 'lend' && t.type !== 'borrow' && t.type !== 'repay' ? `<button class="btn btn-ghost" data-edit>${icon('edit')} Edit</button>` : ''}
+        ${t.type !== 'lend' && t.type !== 'borrow' && t.type !== 'repay' && t.type !== 'receivable' ? `<button class="btn btn-ghost" data-edit>${icon('edit')} Edit</button>` : ''}
         <button class="btn btn-ghost danger-text" data-del>${icon('trash')} Delete</button>
       </div>
     </div>`,
@@ -775,12 +778,12 @@ export function openTxnDetail(t, onChange) {
 /** Delete with a real undo, rather than a confirmation dialog you learn to
  *  dismiss without reading. */
 export async function deleteWithUndo(t, onChange) {
-  const isDebt = t.type === 'lend' || t.type === 'borrow';
+  const isDebt = t.type === 'lend' || t.type === 'borrow' || t.type === 'receivable';
   if (isDebt) {
     const d = St.debt(t.debtId);
     const repaid = d ? (d.principal - debtOutstanding(d, S.txns)) : 0;
     if (repaid > 0 && !await confirmSheet({
-      title: `Delete this ${t.type === 'lend' ? 'loan' : 'borrowing'}?`,
+      title: `Delete this ${t.type === 'lend' ? 'loan' : t.type === 'receivable' ? 'receivable' : 'borrowing'}?`,
       message: `${$$$(repaid)} of repayments recorded against it will be removed too.`,
       confirm: 'Delete everything',
     })) return;
@@ -794,17 +797,18 @@ export async function deleteWithUndo(t, onChange) {
 /* ── Debt detail ──────────────────────────────────────────────────────────── */
 
 export function openDebtDetail(group, onChange) {
-  const lent = group.direction === 'lent';
+  const lent = group.direction === 'lent' || group.direction === 'receivable';
+  const isRec = group.direction === 'receivable';
   const items = group.items.filter((i) => i.outstanding > 0 || !i.settledAt);
   const history = S.txns.filter((t) => group.items.some((i) => i.id === t.debtId)).slice(0, 40);
 
   const h = openSheet({
     title: group.person,
-    subtitle: lent ? 'owes you' : 'you owe',
+    subtitle: isRec ? 'pending service payment' : lent ? 'owes you' : 'you owe',
     body: `<div class="debtview">
       <div class="debt-hero ${lent ? 'tone-due' : 'tone-owe'}">
         <span class="debt-amt">${esc($$$(group.outstanding))}</span>
-        <small>${lent ? 'still to come back' : 'still to pay back'} · of ${esc($$$(group.principal))}</small>
+        <small>${isRec ? 'pending collection' : lent ? 'still to come back' : 'still to pay back'} · of ${esc($$$(group.principal))}</small>
       </div>
       ${items.map((i) => `<div class="debt-item">
         <div><b>${esc($$$(i.outstanding))}</b><small>${esc(relativeDay(i.date || i.createdAt))}${i.note ? ' · ' + esc(i.note) : ''}</small></div>
@@ -818,7 +822,7 @@ export function openDebtDetail(group, onChange) {
         </div>`).join('')}</div>` : ''}
     </div>`,
     actions: group.outstanding > 0
-      ? `<button class="btn btn-ghost" data-part>Part payment</button><button class="btn btn-primary" data-settle>Settle ${esc($c(group.outstanding))}</button>`
+      ? `<button class="btn btn-ghost" data-part>${isRec ? 'Part collection' : 'Part payment'}</button><button class="btn btn-primary" data-settle>${isRec ? 'Collect' : 'Settle'} ${esc($c(group.outstanding))}</button>`
       : `<button class="btn btn-ghost full" data-close>Done</button>`,
     onMount(sheet) {
       const first = items[0];
