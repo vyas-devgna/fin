@@ -14,27 +14,45 @@ import {
 import {
   TYPES, totals, balances, monthKey, monthLabel, lastMonths, addMonths, relativeDay,
   budgetStatus, goalProgress, debtsByPerson, debtOutstanding, categoryBreakdown,
-  monthlyFlow, balanceHistory, monthBounds, effects, isNetChange, fmt,
+  monthlyFlow, balanceHistory, monthBounds, effects, isNetChange, fmt, parseAmount,
   safeToSpend, financialHealth, recurringRadar,
 } from './core.js';
 import { areaChart, hydrateArea, pairedBars, ring, donut, stackBar, sparkline } from './charts.js';
 import * as Native from './native.js';
 import * as Ai from './ai.js';
+import * as PayLens from './paylens.js';
 import {
   openActions, openComposer, openAccountEditor, openBudgetEditor, openGoalEditor,
   openCategoryEditor, openTxnDetail, openDebtDetail, openOnboarding, deleteWithUndo,
   openDatePicker, openUpiScanner, openAiCopilot, openAiSettings, openNotificationReview, openAutomationSettings,
 } from './sheets.js';
 
+/* Four hubs, chosen by task rather than by record type.
+ * The old five tabs (Home/Accounts/Activity/Budgets/Goals) were an object model:
+ * they answered "what kinds of things exist" when the daily question is "what do
+ * I do right now". Accounts, budgets and goals are consulted weekly, so they
+ * live one level down inside Money. */
 const TABS = [
-  { id: 'home', label: 'Home', icon: 'home' },
-  { id: 'accounts', label: 'Accounts', icon: 'wallet' },
-  { id: 'activity', label: 'Activity', icon: 'list' },
-  { id: 'budgets', label: 'Budgets', icon: 'rings' },
-  { id: 'goals', label: 'Goals', icon: 'flag' },
+  { id: 'today', label: 'Today', icon: 'home' },
+  { id: 'pay', label: 'Pay', icon: 'move' },
+  { id: 'ask', label: 'Ask', icon: 'spark' },
+  { id: 'money', label: 'Money', icon: 'wallet' },
 ];
 
-const view = { name: 'home', param: null, month: monthKey(Date.now()), filter: 'all', query: '', limit: 60 };
+const MONEY_SEGMENTS = [
+  { id: 'activity', label: 'Activity' },
+  { id: 'accounts', label: 'Accounts' },
+  { id: 'budgets', label: 'Budgets' },
+  { id: 'goals', label: 'Goals' },
+  { id: 'insights', label: 'Insights' },
+];
+
+const view = {
+  name: 'today', param: null, seg: 'activity',
+  month: monthKey(Date.now()), filter: 'all', query: '', limit: 60,
+  quick: '',            // inline quick-log amount buffer
+  quickCat: null,
+};
 const scrollMemory = new Map();
 
 /* ── Router ───────────────────────────────────────────────────────────────── */
@@ -81,9 +99,12 @@ function render(dir = 0) {
 function paint(dir) {
   const app = $('#app');
   const html = {
-    home: Home, accounts: Accounts, activity: Activity, budgets: Budgets,
-    goals: Goals, insights: Insights, settings: Settings, account: AccountDetail,
-  }[view.name]?.() ?? Home();
+    today: Today, pay: Pay, ask: Ask, money: Money,
+    settings: Settings, account: AccountDetail,
+    // Legacy direct routes, still reachable from links inside Money.
+    home: Today, accounts: Accounts, activity: Activity, budgets: Budgets,
+    goals: Goals, insights: Insights,
+  }[view.name]?.() ?? Today();
 
   app.innerHTML = html;
   app.classList.remove('slide-l', 'slide-r');
@@ -188,7 +209,218 @@ function txnGroups(list, opts = {}) {
 const empty = (ico, title, sub, cta = '') => `<div class="empty">
   <span class="empty-ico">${icon(ico)}</span><h3>${esc(title)}</h3><p>${esc(sub)}</p>${cta}</div>`;
 
-/* ── Home ─────────────────────────────────────────────────────────────────── */
+/* ── Today ────────────────────────────────────────────────────────────────────
+ * The only screen that matters daily. Everything here is either something that
+ * needs a decision (captures, warnings) or the one action you repeat (logging a
+ * spend). Records live in Money.
+ */
+
+function Today() {
+  const t = state();
+  const now = Date.now();
+  const m = monthKey(now);
+  const [mStart] = monthBounds(m);
+  const monthTxns = S.txns.filter((x) => x.date >= mStart);
+  const outM = monthTxns.filter((x) => x.type === 'spend').reduce((s, x) => s + x.amount, 0);
+  const today = S.txns.filter((x) => relativeDay(x.date) === 'Today');
+  const todayOut = today.filter((x) => x.type === 'spend').reduce((s, x) => s + x.amount, 0);
+
+  const captures = Native.drainCaptureQueue();
+  const health = Native.healthCheck();
+  const daysLeft = Math.max(1, Math.ceil((monthBounds(m)[1] - now) / 86400000));
+  const perDay = Math.max(0, Math.floor(t.available / daysLeft));
+
+  const budgets = S.budgets.map((b) => ({ b, s: budgetStatus(b, S.txns, m) }));
+  const alerts = budgets.filter((x) => x.s.state === 'over' || x.s.state === 'close');
+
+  return `
+  ${header(greeting(), {
+    sub: new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long' }),
+    action: `<button class="icon-btn" data-go="settings" aria-label="Settings">${icon('gear')}</button>`,
+  })}
+
+  ${health.length ? `<section class="health rise">
+    ${health.map((h) => `<button class="health-row" data-health="${h.id}">
+      ${icon('alert')}<span><b>${esc(h.label)}</b><small>${esc(h.why)}</small></span>${icon('chevron')}
+    </button>`).join('')}
+  </section>` : ''}
+
+  ${captures.length ? `<section class="block rise">
+    <div class="block-head"><h3>Detected ${captures.length > 1 ? `(${captures.length})` : ''}</h3></div>
+    <div class="captures">${captures.slice(0, 6).map((c) => `
+      <div class="capture" data-cap="${esc(c.id)}">
+        <div class="cap-top">
+          <span class="cap-amt ${c.type === 'receive' ? 'good' : ''}">${c.type === 'receive' ? '+' : '−'}${esc($$$(c.amountPaise))}</span>
+          <span class="cap-src">${esc(Native.labelFor(c.sourceAppId) || c.sourceAppName || 'SMS')}</span>
+        </div>
+        <p class="cap-merchant">${esc(c.merchant || 'Unknown')}</p>
+        <div class="cap-acts">
+          <button class="btn btn-ghost" data-cap-skip="${esc(c.id)}">Dismiss</button>
+          <button class="btn btn-primary" data-cap-add="${esc(c.id)}">Add</button>
+        </div>
+      </div>`).join('')}</div>
+  </section>` : ''}
+
+  <section class="hero glass rise">
+    <p class="hero-label">Safe to spend today</p>
+    <h2 class="hero-amount" data-animate>${esc($$$(perDay))}</h2>
+    <div class="hero-meta">
+      <span>${esc($$$(t.available))} spendable</span>
+      <small>· ${daysLeft} ${daysLeft === 1 ? 'day' : 'days'} left this month</small>
+    </div>
+    ${todayOut ? `<div class="hero-today">Spent today <b>${esc($$$(todayOut))}</b></div>` : ''}
+  </section>
+
+  ${alerts.length ? `<section class="alerts">${alerts.map((x) => {
+    const c = St.category(x.b.category);
+    return `<button class="alert ${x.s.state}" data-money-seg="budgets">
+      ${icon(x.s.state === 'over' ? 'alert' : 'trend')}
+      <span><b>${esc(c ? c.name : 'Overall')}</b> ${x.s.state === 'over' ? `over by ${esc($c(-x.s.left))}` : `${esc($c(x.s.left))} left`}</span>
+    </button>`;
+  }).join('')}</section>` : ''}
+
+  <!-- Quick log: the one thing done every day, with no sheet in the way. -->
+  <section class="quicklog glass rise">
+    <div class="ql-amount ${view.quick ? '' : 'empty'}" data-ql-amt>
+      <span class="cur">${esc(S.meta.currency || '₹')}</span><span data-ql-val>${esc(view.quick || '0')}</span>
+    </div>
+    <div class="ql-cats">${St.rankedCategories('spend').slice(0, 6).map((c) => `
+      <button class="ql-cat ${view.quickCat === c.id ? 'on' : ''}" data-ql-cat="${c.id}" style="--c:${c.color}">
+        <i>${esc(c.emoji)}</i><span>${esc(c.name)}</span></button>`).join('')}</div>
+    <div class="ql-pad">
+      ${['1','2','3','4','5','6','7','8','9','.','0','⌫'].map((k) => `<button class="ql-key" data-ql="${k}">${k}</button>`).join('')}
+    </div>
+    <div class="ql-actions">
+      <button class="btn btn-ghost" data-ql-more>More${icon('chevron')}</button>
+      <button class="btn btn-primary" data-ql-save ${view.quick ? '' : 'disabled'}>Log spend</button>
+    </div>
+  </section>
+
+  <section class="block">
+    <div class="block-head"><h3>Today</h3><button class="link" data-money-seg="activity">All ${icon('chevron')}</button></div>
+    <div class="card list">${today.length ? txnGroups(today) : empty('wave', 'Nothing yet today', 'Log something above, or scan a QR from the Pay tab.')}</div>
+  </section>
+
+  <div class="tail"></div>`;
+}
+
+/* ── Pay ──────────────────────────────────────────────────────────────────── */
+
+function Pay() {
+  const apps = Native.upiApps();
+  const def = S.meta.defaultUpiApp;
+  const rules = S.meta.routingRules || {};
+  const vendorRules = Object.entries(rules.vendors || {});
+  const catRules = Object.entries(rules.categories || {});
+  const recents = paidVendors().slice(0, 8);
+
+  return `
+  ${header('Pay')}
+
+  <div class="pay-actions">
+    <button class="pay-big" data-scan>
+      <span class="pay-ico">${icon('search')}</span>
+      <b>Scan QR</b><small>Point and pay</small>
+    </button>
+    <button class="pay-big alt" data-vpa>
+      <span class="pay-ico">${icon('user')}</span>
+      <b>UPI ID</b><small>Type it in</small>
+    </button>
+  </div>
+
+  ${recents.length ? `<section class="block">
+    <div class="block-head"><h3>Pay again</h3></div>
+    <div class="card list">${recents.map((p) => `
+      <button class="row row-tap" data-payagain="${esc(p.key)}">
+        <span class="row-face tone-move">${esc((p.name || '?')[0].toUpperCase())}</span>
+        <span class="row-main"><b>${esc(p.name)}</b><small>${p.count}× · usually ${esc($c(p.median))}${p.preferredApp ? ` · ${esc(Native.labelFor(p.preferredApp))}` : ''}</small></span>
+        ${icon('chevron')}
+      </button>`).join('')}</div>
+  </section>` : ''}
+
+  <section class="block">
+    <div class="block-head"><h3>Default app</h3></div>
+    <div class="card list">
+      <button class="row row-tap" data-setdefault>
+        <span class="row-face tone-move">${icon('move')}</span>
+        <span class="row-main"><b>${esc(def ? Native.labelFor(def) : 'Ask every time')}</b>
+          <small>${apps.length ? `${apps.length} UPI apps on this phone` : 'No UPI apps detected'}</small></span>
+        ${icon('chevron')}
+      </button>
+    </div>
+    <p class="hint">Payments open this app directly, skipping Android's chooser.</p>
+  </section>
+
+  ${(vendorRules.length || catRules.length) ? `<section class="block">
+    <div class="block-head"><h3>Rules</h3><small class="muted">payee beats category</small></div>
+    <div class="card list">
+      ${vendorRules.map(([k, pkg]) => `<button class="row row-tap" data-delrule="vendor|${esc(k)}">
+        <span class="row-face tone-settle">${icon('user')}</span>
+        <span class="row-main"><b>${esc(k)}</b><small>→ ${esc(Native.labelFor(pkg))}</small></span>
+        ${icon('x')}</button>`).join('')}
+      ${catRules.map(([k, pkg]) => `<button class="row row-tap" data-delrule="category|${esc(k)}">
+        <span class="row-face tone-move">${esc(St.category(k)?.emoji || '•')}</span>
+        <span class="row-main"><b>${esc(St.category(k)?.name || k)}</b><small>→ ${esc(Native.labelFor(pkg))}</small></span>
+        ${icon('x')}</button>`).join('')}
+    </div>
+  </section>` : ''}
+  <div class="tail"></div>`;
+}
+
+function paidVendors() {
+  const seen = new Map();
+  for (const t of S.txns) {
+    const k = (t.vpa || '').toLowerCase();
+    if (!k || seen.has(k)) continue;
+    seen.set(k, PayLens.vendorMemory(k));
+  }
+  return [...seen.values()].filter(Boolean).sort((a, b) => b.count - a.count);
+}
+
+/* ── Ask ──────────────────────────────────────────────────────────────────── */
+
+const chat = [];
+
+function Ask() {
+  const cfg = Ai.getAiConfig();
+  const openers = [
+    'What did I spend most on this month?',
+    'Can I afford ₹2,000 today?',
+    'Why was this month expensive?',
+    'What should I cut next week?',
+  ];
+  return `
+  ${header('Ask', { sub: cfg.enabled ? 'Knows your numbers' : 'Needs an API key' })}
+  <div class="chat" data-chat>
+    ${chat.length ? chat.map((m) => `<div class="bubble ${m.role}">${esc(m.content)}</div>`).join('')
+      : `<div class="chat-empty">
+          <span class="empty-ico">${icon('spark')}</span>
+          <p>${cfg.enabled ? 'Ask anything about your money. It reads your live ledger.' : 'Add an OpenRouter key in Settings to enable this.'}</p>
+          <div class="chat-openers">${openers.map((o) => `<button class="chip" data-opener="${esc(o)}">${esc(o)}</button>`).join('')}</div>
+        </div>`}
+  </div>
+  <form class="chat-bar glass" data-chatform>
+    <input data-chatinput placeholder="Ask about your money" enterkeyhint="send" autocomplete="off">
+    <button class="icon-btn" type="submit" aria-label="Send">${icon('in')}</button>
+  </form>`;
+}
+
+/* ── Money ────────────────────────────────────────────────────────────────── */
+
+function Money() {
+  const body = {
+    activity: Activity, accounts: Accounts, budgets: Budgets, goals: Goals, insights: Insights,
+  }[view.seg] || Activity;
+  // Each sub-screen renders its own topbar; strip it so the hub has one header.
+  const inner = body().replace(/<header class="topbar">[\s\S]*?<\/header>/, '');
+  return `
+  ${header('Money', { action: `<button class="icon-btn" data-go="settings" aria-label="Settings">${icon('gear')}</button>` })}
+  <div class="segbar">${MONEY_SEGMENTS.map((s) => `
+    <button class="seg-btn ${view.seg === s.id ? 'on' : ''}" data-money-seg="${s.id}">${esc(s.label)}</button>`).join('')}</div>
+  ${inner}`;
+}
+
+/* ── Home (legacy, kept for the account-detail back path) ─────────────────── */
 
 function Home() {
   const t = state();
@@ -931,6 +1163,8 @@ function bind(root) {
     });
   }
 
+  bindHubs(root);
+
   /* Settings */
   bindSettings(root);
 
@@ -950,6 +1184,146 @@ function parseFinal(text) {
   const neg = text.includes('−') || text.includes('-');
   const digits = text.replace(/[^\d.]/g, '');
   return Math.round(parseFloat(digits || '0') * 100) * (neg ? -1 : 1);
+}
+
+/* ── Hub wiring ───────────────────────────────────────────────────────────── */
+
+function bindHubs(root) {
+  /* Money segments */
+  $$('[data-money-seg]', root).forEach((b) => b.addEventListener('click', () => {
+    haptic('select');
+    view.seg = b.dataset.moneySeg;
+    if (view.name !== 'money') go('money'); else render();
+  }));
+
+  /* Permission health */
+  $$('[data-health]', root).forEach((b) => b.addEventListener('click', async () => {
+    haptic('tap');
+    const issue = Native.healthCheck().find((h) => h.id === b.dataset.health);
+    if (!issue) return;
+    // Autostart cannot be read back, so confirm it manually once.
+    if (issue.id === 'autostart') {
+      issue.fix();
+      setTimeout(async () => {
+        if (await confirmSheet({ title: 'Autostart enabled?', message: 'Find Fin in the list and switch it on. Without it HyperOS stops the capture service.', confirm: 'Yes, done', tone: 'primary' })) {
+          await St.setMeta('autostartConfirmed', true); render();
+        }
+      }, 900);
+      return;
+    }
+    issue.fix();
+  }));
+
+  /* Capture queue */
+  $$('[data-cap-add]', root).forEach((b) => b.addEventListener('click', async () => {
+    const item = Native.drainCaptureQueue().find((c) => c.id === b.dataset.capAdd);
+    if (!item) return;
+    haptic('success');
+    const acc = St.spendAccounts()[0] || St.liveAccounts()[0];
+    if (!acc) { toast('Create an account first.'); return; }
+    await St.addTxn({
+      type: item.type === 'receive' ? 'receive' : 'spend',
+      amount: item.amountPaise, account: acc.id,
+      note: item.merchant || '', date: item.timestamp || Date.now(),
+      capturedFrom: item.sourceAppId,
+    });
+    await Native.markCaptureHandled(item.id);
+    render();
+    toast('Added.', { tone: 'good' });
+  }));
+  $$('[data-cap-skip]', root).forEach((b) => b.addEventListener('click', async () => {
+    haptic('light');
+    await Native.markCaptureHandled(b.dataset.capSkip);
+    render();
+  }));
+
+  /* Quick log */
+  const qlSave = $('[data-ql-save]', root);
+  $$('[data-ql]', root).forEach((k) => k.addEventListener('click', () => {
+    const v = k.dataset.ql;
+    haptic('light');
+    if (v === '⌫') view.quick = view.quick.slice(0, -1);
+    else if (v === '.') { if (!view.quick.includes('.')) view.quick = (view.quick || '0') + '.'; }
+    else { if (/\.\d\d$/.test(view.quick)) return; view.quick = view.quick === '0' ? v : view.quick + v; }
+    // Patch in place rather than re-render: a full repaint on every keypress
+    // would restart the entrance animations and feel broken.
+    const val = $('[data-ql-val]', root);
+    if (val) {
+      val.textContent = view.quick || '0';
+      $('[data-ql-amt]', root).classList.toggle('empty', !view.quick);
+    }
+    if (qlSave) qlSave.disabled = !parseAmount(view.quick || '0');
+  }));
+  $$('[data-ql-cat]', root).forEach((b) => b.addEventListener('click', () => {
+    haptic('select');
+    view.quickCat = view.quickCat === b.dataset.qlCat ? null : b.dataset.qlCat;
+    $$('[data-ql-cat]', root).forEach((x) => x.classList.toggle('on', x.dataset.qlCat === view.quickCat));
+  }));
+  qlSave?.addEventListener('click', async () => {
+    const amt = parseAmount(view.quick || '0');
+    if (!amt) return;
+    const acc = St.spendAccounts()[0] || St.liveAccounts()[0];
+    if (!acc) { toast('Create an account first.'); return; }
+    haptic('success');
+    await St.addTxn({ type: 'spend', amount: amt, account: acc.id, category: view.quickCat || undefined });
+    view.quick = ''; view.quickCat = null;
+    render();
+    toast(`Logged ${$$$(amt)}`, { tone: 'good' });
+  });
+  $('[data-ql-more]', root)?.addEventListener('click', () => {
+    haptic('tap');
+    const prefill = { category: view.quickCat };
+    view.quick = ''; view.quickCat = null;
+    openActions();
+    void prefill;
+  });
+
+  /* Pay hub */
+  $('[data-scan]', root)?.addEventListener('click', () => { haptic('tap'); PayLens.openScanner(); });
+  $('[data-vpa]', root)?.addEventListener('click', () => { haptic('tap'); PayLens.openManualEntry(); });
+  $$('[data-payagain]', root).forEach((b) => b.addEventListener('click', () => {
+    const p = PayLens.vendorMemory(b.dataset.payagain);
+    if (!p) return;
+    haptic('tap');
+    PayLens.openPrePayment({ valid: true, payeeVpa: p.key, payeeName: p.name, amountPaise: 0, note: '' });
+  }));
+  $('[data-setdefault]', root)?.addEventListener('click', () => {
+    const apps = Native.upiApps();
+    if (!apps.length) { toast('No UPI apps found. Is this the web build?'); return; }
+    pickSheet({
+      title: 'Default payment app',
+      subtitle: 'Used when no rule matches',
+      items: [{ id: '', label: 'Ask every time', selected: !S.meta.defaultUpiApp },
+        ...apps.map((a) => ({ id: a.package, label: Native.labelFor(a.package), selected: S.meta.defaultUpiApp === a.package }))],
+      onPick: async (pkg) => { await St.setMeta('defaultUpiApp', pkg || null); render(); },
+    });
+  });
+  $$('[data-delrule]', root).forEach((b) => b.addEventListener('click', async () => {
+    const [kind, key] = b.dataset.delrule.split('|');
+    const r = { vendors: {}, categories: {}, amounts: [], ...(S.meta.routingRules || {}) };
+    if (kind === 'vendor') delete r.vendors[key]; else delete r.categories[key];
+    await St.setMeta('routingRules', r);
+    haptic('light'); render();
+  }));
+
+  /* Ask */
+  const form = $('[data-chatform]', root);
+  form?.addEventListener('submit', (e) => { e.preventDefault(); sendChat($('[data-chatinput]', root).value); });
+  $$('[data-opener]', root).forEach((b) => b.addEventListener('click', () => sendChat(b.dataset.opener)));
+}
+
+async function sendChat(text) {
+  const q = (text || '').trim();
+  if (!q) return;
+  haptic('tap');
+  chat.push({ role: 'user', content: q });
+  chat.push({ role: 'assistant', content: '…' });
+  render();
+  const res = await Ai.ask(q, chat.slice(0, -2));
+  chat[chat.length - 1] = { role: 'assistant', content: res.text };
+  render();
+  const box = $('[data-chat]');
+  if (box) box.scrollTop = box.scrollHeight;
 }
 
 function bindSettings(root) {
@@ -1139,25 +1513,28 @@ function wireNativeEvents() {
   Native.on('resume', async () => {
     const made = await St.runRecurring();
     if (made.length) render();
-    const pending = Native.drainCaptureQueue();
-    if (pending.length) {
-      toast(`${pending.length} transaction${pending.length > 1 ? 's' : ''} detected`, {
-        action: 'Review', ms: 7000, onAction: () => go('activity'),
-      });
-    }
+    // Returning from a UPI app is the only moment worth asking whether the
+    // payment actually happened.
+    const pending = S.meta.pendingPayment;
+    if (pending && Date.now() - pending.at < 30 * 60000) PayLens.openPostPayment(pending);
+    else if (pending) St.setMeta('pendingPayment', null);
+    render();
   });
+
+  Native.on('payment', (session) => session && PayLens.openPostPayment(session));
 }
 
 /* ── Boot ─────────────────────────────────────────────────────────────────── */
 
 async function boot() {
   const bar = $('#tabbar');
+  // No FAB: Today owns the quick-log and Pay owns the scanner, so a floating
+  // button would only open a sheet that opens another sheet.
   bar.innerHTML = `<span class="tab-pill"></span>${TABS.map((t) => `
-    <button class="tab" data-tab="${t.id}">${icon(t.icon)}<span>${esc(t.label)}</span></button>`).join('')}
-    <button class="fab" id="fab" aria-label="Add">${icon('plus')}</button>`;
+    <button class="tab" data-tab="${t.id}">${icon(t.icon)}<span>${esc(t.label)}</span></button>`).join('')}`;
+  bar.style.setProperty('--n', TABS.length);
 
   $$('.tab', bar).forEach((b) => b.addEventListener('click', () => { haptic('tap'); go(b.dataset.tab); }));
-  $('#fab').addEventListener('click', () => { haptic('tap'); openActions(); });
 
   Native.install();
   Ai.bindStore(St);

@@ -1114,6 +1114,204 @@ svg.ico { width: 22px; height: 22px; flex: none; }
 
 .version { text-align: center; font-size: 12px; color: var(--text-3); margin-top: 26px; }
 
+/* ══ Hubs ═══════════════════════════════════════════════════════════════════ */
+
+/* Tab pill sizes itself from the tab count instead of a hardcoded 5. */
+.tab-pill { width: calc((100% - 12px) / var(--n, 4)); }
+
+/* ── Permission health ────────────────────────────────────────────────────── */
+.health { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.health-row {
+  display: flex; align-items: center; gap: 11px; width: 100%; text-align: left;
+  padding: 12px 14px; border-radius: 16px;
+  background: color-mix(in srgb, var(--orange) 11%, transparent);
+  border: .5px solid color-mix(in srgb, var(--orange) 24%, transparent);
+  color: color-mix(in srgb, var(--orange) 92%, var(--text));
+}
+.health-row span { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.health-row b { font-size: 14.5px; font-weight: 600; }
+.health-row small { font-size: 12px; opacity: .85; }
+.health-row .ico { width: 19px; height: 19px; flex: none; }
+.health-row:active { transform: scale(.985); }
+
+/* ── Capture queue ────────────────────────────────────────────────────────── */
+.captures { display: flex; flex-direction: column; gap: 10px; }
+.capture {
+  padding: 14px 15px 12px; border-radius: 18px;
+  background: var(--card); border: .5px solid var(--line);
+  backdrop-filter: var(--blur); box-shadow: var(--shadow-s);
+}
+.cap-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.cap-amt { font-size: 21px; font-weight: 680; letter-spacing: -.03em; }
+.cap-src { font-size: 11.5px; color: var(--text-3); }
+.cap-merchant { font-size: 14px; color: var(--text-2); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cap-acts { display: flex; gap: 8px; margin-top: 12px; }
+.cap-acts .btn { flex: 1; height: 40px; font-size: 14px; }
+
+.hero-today { margin-top: 10px; padding-top: 10px; border-top: .5px solid var(--line-2); font-size: 13.5px; color: var(--text-2); }
+.hero-today b { color: var(--text); font-weight: 620; }
+
+/* ── Quick log ────────────────────────────────────────────────────────────── */
+.quicklog { margin-top: 14px; padding: 16px 14px 14px; border-radius: 24px; }
+.ql-amount {
+  display: flex; align-items: baseline; justify-content: center; gap: 3px;
+  font-size: 42px; font-weight: 700; letter-spacing: -.04em; padding: 2px 0 12px;
+  transition: color var(--base);
+}
+.ql-amount .cur { font-size: .5em; font-weight: 600; color: var(--text-2); }
+.ql-amount.empty { color: var(--text-3); }
+
+.ql-cats {
+  display: flex; gap: 7px; overflow-x: auto; padding: 0 2px 12px;
+  margin-inline: -4px; scrollbar-width: none;
+}
+.ql-cat {
+  flex: none; display: flex; flex-direction: column; align-items: center; gap: 3px;
+  padding: 8px 12px; border-radius: 14px; background: var(--line-2);
+  font-size: 11px; font-weight: 550; color: var(--text-2);
+  transition: transform var(--fast) var(--spring), background var(--fast), color var(--fast);
+}
+.ql-cat i { font-style: normal; font-size: 19px; }
+.ql-cat.on { background: color-mix(in srgb, var(--c) 16%, transparent); color: var(--c); }
+.ql-cat:active { transform: scale(.92); }
+
+.ql-pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
+.ql-key {
+  height: 46px; border-radius: 14px; font-size: 21px; font-weight: 480;
+  background: var(--card-solid); box-shadow: var(--shadow-s);
+  transition: transform .1s var(--spring), background .1s;
+}
+.ql-key:active { transform: scale(.93); background: var(--tint-soft); }
+.ql-actions { display: flex; gap: 9px; margin-top: 11px; }
+.ql-actions .btn { flex: 1; height: 46px; }
+.ql-actions .btn-ghost { flex: 0 0 34%; }
+
+/* ── Pay hub ──────────────────────────────────────────────────────────────── */
+.pay-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; margin-top: 6px; }
+.pay-big {
+  padding: 20px 16px 16px; border-radius: 22px; text-align: left;
+  display: flex; flex-direction: column; gap: 2px;
+  background: linear-gradient(160deg, color-mix(in srgb, var(--tint) 92%, white), var(--tint));
+  color: #fff; box-shadow: 0 6px 20px color-mix(in srgb, var(--tint) 34%, transparent);
+  transition: transform var(--fast) var(--spring);
+}
+.pay-big.alt {
+  background: var(--card); color: var(--text);
+  border: .5px solid var(--line); box-shadow: var(--shadow-s);
+  backdrop-filter: var(--blur);
+}
+.pay-big:active { transform: scale(.95); }
+.pay-big b { font-size: 16.5px; font-weight: 650; margin-top: 10px; }
+.pay-big small { font-size: 12.5px; opacity: .8; }
+.pay-ico { width: 34px; height: 34px; border-radius: 12px; display: grid; place-items: center; background: rgba(255,255,255,.2); }
+.pay-big.alt .pay-ico { background: var(--tint-soft); color: var(--tint); }
+
+/* ── Money segments ───────────────────────────────────────────────────────── */
+.segbar {
+  display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none;
+  margin: 0 calc(var(--gutter) * -1) 4px; padding: 2px var(--gutter) 8px;
+  position: sticky; top: calc(env(safe-area-inset-top) + 62px); z-index: 15;
+  background: linear-gradient(var(--bg) 70%, transparent);
+}
+.seg-btn {
+  flex: none; padding: 7px 15px; border-radius: 999px; font-size: 13.5px; font-weight: 560;
+  background: var(--card); border: .5px solid var(--line); color: var(--text-2);
+  backdrop-filter: var(--blur); transition: background var(--fast), color var(--fast), transform var(--fast) var(--spring);
+}
+.seg-btn.on { background: var(--text); color: var(--bg); border-color: transparent; }
+.seg-btn:active { transform: scale(.93); }
+
+/* ── Scanner ──────────────────────────────────────────────────────────────── */
+.scan-stage {
+  position: relative; border-radius: 22px; overflow: hidden;
+  aspect-ratio: 1; background: #000; display: grid; place-items: center;
+}
+.scan-video { width: 100%; height: 100%; object-fit: cover; }
+.scan-frame { position: absolute; inset: 18%; }
+.scan-frame i {
+  position: absolute; width: 30px; height: 30px;
+  border: 3px solid #fff; border-radius: 6px;
+}
+.scan-frame i:nth-child(1) { top: 0; left: 0; border-right: 0; border-bottom: 0; }
+.scan-frame i:nth-child(2) { top: 0; right: 0; border-left: 0; border-bottom: 0; }
+.scan-frame i:nth-child(3) { bottom: 0; left: 0; border-right: 0; border-top: 0; }
+.scan-frame i:nth-child(4) { bottom: 0; right: 0; border-left: 0; border-top: 0; }
+.scan-hint {
+  position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
+  font-size: 13px; color: #fff; background: rgba(0,0,0,.55);
+  padding: 7px 14px; border-radius: 999px; backdrop-filter: blur(8px); white-space: nowrap;
+}
+.scan-torch {
+  position: absolute; top: 14px; right: 14px; width: 40px; height: 40px;
+  border-radius: 50%; background: rgba(0,0,0,.5); color: #fff; display: grid; place-items: center;
+}
+.scan-torch.on { background: #fff; color: #000; }
+.scan-alt { margin-top: 16px; }
+.scan-recent { margin-top: 8px; }
+
+/* ── Pre-payment ──────────────────────────────────────────────────────────── */
+.prepay { display: flex; flex-direction: column; gap: 14px; }
+.pp-payee { display: flex; align-items: center; gap: 12px; }
+.pp-payee div { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.pp-payee b { font-size: 17px; font-weight: 620; letter-spacing: -.02em; }
+.pp-payee small { font-size: 12.5px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; }
+.pp-avatar {
+  width: 46px; height: 46px; border-radius: 15px; flex: none;
+  display: grid; place-items: center; font-size: 19px; font-weight: 650;
+  background: var(--tint-soft); color: var(--tint);
+}
+.pp-avatar.big { width: 62px; height: 62px; border-radius: 20px; font-size: 26px; }
+.pill-known { background: color-mix(in srgb, var(--green) 14%, transparent); color: var(--green); }
+
+.pp-amount {
+  display: flex; align-items: baseline; justify-content: center; gap: 3px;
+  flex-wrap: wrap; padding: 14px 0 10px; font-size: 46px; font-weight: 700; letter-spacing: -.04em;
+  border-radius: 20px; background: var(--line-2);
+}
+.pp-amount .cur { font-size: .5em; font-weight: 600; color: var(--text-2); }
+.pp-amount .pp-lock { flex-basis: 100%; text-align: center; font-size: 11.5px; font-style: normal; color: var(--text-3); font-weight: 400; letter-spacing: 0; }
+.pp-amount.locked { background: transparent; }
+
+.pp-warnings { display: flex; flex-direction: column; gap: 7px; }
+.pp-warn {
+  display: flex; align-items: flex-start; gap: 9px; padding: 10px 13px; border-radius: 13px;
+  font-size: 13.5px; line-height: 1.35;
+}
+.pp-warn .ico { width: 17px; height: 17px; flex: none; margin-top: 1px; }
+.pp-warn.high { background: color-mix(in srgb, var(--red) 12%, transparent); color: color-mix(in srgb, var(--red) 92%, var(--text)); }
+.pp-warn.mid { background: color-mix(in srgb, var(--orange) 12%, transparent); color: color-mix(in srgb, var(--orange) 92%, var(--text)); }
+.pp-warn.low { background: var(--line-2); color: var(--text-2); }
+
+.pp-rows { display: flex; flex-direction: column; gap: 6px; }
+.postpay { display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 14px 0 6px; text-align: center; }
+.postpay h3 { font-size: 30px; font-weight: 700; letter-spacing: -.035em; margin-top: 10px; }
+.postpay p { font-size: 14px; color: var(--text-2); }
+
+/* ── Chat ─────────────────────────────────────────────────────────────────── */
+.chat {
+  display: flex; flex-direction: column; gap: 10px; padding: 8px 0 16px;
+  min-height: 50vh;
+}
+.bubble {
+  max-width: 86%; padding: 11px 15px; border-radius: 20px;
+  font-size: 15px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere;
+  animation: rise .4s var(--ease) backwards;
+}
+.bubble.user { align-self: flex-end; background: var(--tint); color: #fff; border-bottom-right-radius: 7px; }
+.bubble.assistant { align-self: flex-start; background: var(--card); border: .5px solid var(--line); border-bottom-left-radius: 7px; backdrop-filter: var(--blur); }
+.chat-empty { text-align: center; padding: 40px 10px; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.chat-empty p { font-size: 14.5px; color: var(--text-2); max-width: 32ch; }
+.chat-openers { display: flex; flex-direction: column; gap: 7px; margin-top: 10px; width: 100%; }
+.chat-openers .chip { text-align: left; }
+.chat-bar {
+  position: fixed; left: 50%; transform: translateX(-50%);
+  bottom: calc(env(safe-area-inset-bottom) + var(--tabbar-h) + 20px);
+  width: min(calc(100% - 32px), 528px); z-index: 50;
+  display: flex; align-items: center; gap: 8px; padding: 6px 6px 6px 16px; border-radius: 26px;
+}
+.chat-bar input { flex: 1; border: 0; outline: 0; background: none; font-size: 15.5px; min-width: 0; }
+.chat-bar .icon-btn { background: var(--tint); color: #fff; border: 0; }
+
 /* ── Lock shield ──────────────────────────────────────────────────────────────
  * Fully opaque, not translucent: a frosted blur over a balance is still a
  * readable balance to a camera. */
