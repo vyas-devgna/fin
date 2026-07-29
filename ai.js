@@ -11,7 +11,18 @@
  */
 import { fmt, monthKey, monthBounds } from './core.js';
 
-const MODEL_FALLBACK = 'meta-llama/llama-3.3-70b-instruct:free';
+/* OpenRouter's free catalogue churns — models are retired without notice, and a
+ * retired id 404s on every call, which looks exactly like "the AI is broken".
+ * So this is a chain, not a constant: a dead or rate-limited model falls through
+ * to the next one. Verified working at time of writing; the fallbacks exist
+ * precisely because that guarantee expires. */
+const MODELS = [
+  'nvidia/nemotron-3-super-120b-a12b:free',
+  'google/gemma-4-26b-a4b-it:free',
+  'nvidia/nemotron-3-nano-30b-a3b:free',
+  'openai/gpt-oss-20b:free',
+];
+const MODEL_FALLBACK = MODELS[0];
 const ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions';
 
 /* ── Key resolution ────────────────────────────────────────────────────────────
@@ -44,42 +55,56 @@ export const aiReady = async () => (await aiConfig()).enabled;
 
 /* ── Transport ────────────────────────────────────────────────────────────── */
 
+/** Remembers which model actually answered, so the chain is walked once. */
+let workingModel = null;
+
 async function call(messages, { temperature = 0.3, maxTokens = 700, json = false } = {}) {
   const cfg = await aiConfig();
   if (!cfg.enabled) throw new Error('NO_KEY');
 
-  const ctrl = new AbortController();
-  // A finance assistant that hangs is worse than one that says it timed out.
-  const timer = setTimeout(() => ctrl.abort(), 45000);
-  try {
-    const res = await fetch(ENDPOINT, {
-      method: 'POST',
-      signal: ctrl.signal,
-      headers: {
-        Authorization: `Bearer ${cfg.key}`,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': 'https://fin.vyasdevgna.online',
-        'X-Title': 'Fin',
-      },
-      body: JSON.stringify({
-        model: cfg.model,
-        messages,
-        temperature,
-        max_tokens: maxTokens,
-        ...(json ? { response_format: { type: 'json_object' } } : {}),
-      }),
-    });
-    if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      if (res.status === 401) throw new Error('BAD_KEY');
-      if (res.status === 429) throw new Error('RATE_LIMIT');
-      throw new Error(`HTTP ${res.status} ${body.slice(0, 120)}`);
+  // Preference order: whatever worked last, then the configured model, then the chain.
+  const chain = [...new Set([workingModel, cfg.model, ...MODELS].filter(Boolean))];
+  let lastErr = null;
+
+  for (const model of chain) {
+    const ctrl = new AbortController();
+    // A finance assistant that hangs is worse than one that says it timed out.
+    const timer = setTimeout(() => ctrl.abort(), 45000);
+    try {
+      const res = await fetch(ENDPOINT, {
+        method: 'POST',
+        signal: ctrl.signal,
+        headers: {
+          Authorization: `Bearer ${cfg.key}`,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': 'https://fin.vyasdevgna.online',
+          'X-Title': 'Fin',
+        },
+        body: JSON.stringify({
+          model, messages, temperature, max_tokens: maxTokens,
+          ...(json ? { response_format: { type: 'json_object' } } : {}),
+        }),
+      });
+
+      if (res.status === 401) throw new Error('BAD_KEY');   // no point retrying
+      if (!res.ok) { lastErr = new Error(`HTTP ${res.status}`); continue; }
+
+      const j = await res.json();
+      // OpenRouter returns 200 with an error body for a dead or refusing model.
+      if (j?.error) { lastErr = new Error(j.error.message || 'provider error'); continue; }
+      const text = (j?.choices?.[0]?.message?.content || '').trim();
+      if (!text) { lastErr = new Error('empty response'); continue; }
+
+      workingModel = model;
+      return text;
+    } catch (e) {
+      if (e.message === 'BAD_KEY') throw e;
+      lastErr = e;
+    } finally {
+      clearTimeout(timer);
     }
-    const j = await res.json();
-    return (j?.choices?.[0]?.message?.content || '').trim();
-  } finally {
-    clearTimeout(timer);
   }
+  throw lastErr || new Error('no model responded');
 }
 
 /* ── Persona ──────────────────────────────────────────────────────────────────

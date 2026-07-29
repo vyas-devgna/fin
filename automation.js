@@ -1,103 +1,75 @@
-/* automation.js — Selective Notification & SMS Automation Manager.
+/* automation.js — transaction text parsing for the web build.
  *
- * Configures OS-level app filtering (only inspecting user-selected apps) and
- * applies financial NLP heuristics to transform incoming debits/credits into
- * ready-to-log ledger items without compromise to privacy or calculation exactitude.
+ * On Android the real work happens natively in FinTxnParser.kt, which runs even
+ * when the app is closed. This is the browser-side equivalent, kept for the web
+ * build and because test.js pins its behaviour.
+ *
+ * The queue itself used to live here in localStorage. It now lives in the
+ * native SharedPreferences queue read through native.js, so it survives the app
+ * being killed and is covered by backup/export. Everything related to that has
+ * been removed rather than left to rot alongside a second source of truth.
  */
 import { parseAmount, uid } from './core.js';
 
-const MONITORED_APPS_KEY = 'fin_monitored_apps';
-const NOTIFY_QUEUE_KEY = 'fin_notification_queue';
+/** "Rs.450", "INR 1,200.50", "₹120", "450.00 debited" */
+const AMOUNT = /(?:(?:rs\.?|inr|₹)\s*([\d,]+(?:\.\d{1,2})?))|(?:([\d,]+(?:\.\d{1,2})?)\s*(?:rs\.?|inr|₹))/i;
+const DEBIT = /\b(debited|debit|paid|spent|sent|withdrawn|deducted|purchase|charged|transferred to)\b/i;
+const CREDIT = /\b(credited|credit|received|deposited|refund(?:ed)?|cashback|added to|salary)\b/i;
 
-/**
- * Standard banking, UPI, and SMS messaging packages available for monitoring.
- */
-export const POPULAR_FINANCE_APPS = [
-  { id: 'com.google.android.apps.nbu.paisa.user', name: 'Google Pay (GPay)', icon: 'gpay', type: 'upi' },
-  { id: 'com.phonepe.app', name: 'PhonePe', icon: 'phonepe', type: 'upi' },
-  { id: 'net.one97.paytm', name: 'Paytm Payments', icon: 'paytm', type: 'upi' },
-  { id: 'com.dreamplug.androidapp', name: 'CRED Club', icon: 'cred', type: 'upi' },
-  { id: 'in.org.npci.upiapp', name: 'BHIM NPCI UPI', icon: 'bhim', type: 'upi' },
-  { id: 'com.snapwork.hdfc', name: 'HDFC Bank Mobile', icon: 'hdfc', type: 'bank' },
-  { id: 'com.sbi.lotusintouch', name: 'YONO SBI', icon: 'sbi', type: 'bank' },
-  { id: 'com.csam.icici.bank.imobile', name: 'ICICI iMobile Pay', icon: 'icici', type: 'bank' },
-  { id: 'com.google.android.apps.messaging', name: 'Google Messages (Bank SMS)', icon: 'sms', type: 'sms' },
-  { id: 'com.samsung.android.messaging', name: 'Samsung SMS Messages', icon: 'sms', type: 'sms' },
+/* OTPs and offers look like transactions and are not. Dropping a real one costs
+ * a manual entry; accepting a fake one corrupts the ledger. */
+const NOT_A_TXN = /\b(otp|one[ -]?time password|do not share|will expire|offer|apply now|reward points|avl bal|available balance|balance is|statement|min due|due date)\b/i;
+
+/* The counterparty follows "to" or "from", but bank SMS says "debited from bank
+ * account XX4567 to SWIGGY STORES" — so both prepositions appear and the first
+ * one points at your own account, not the merchant. NOISE skips those. */
+const NOISE = String.raw`(?!(?:your|the|a\/c|ac|acct|account|bank|card|wallet|vpa|upi)\b)`;
+const TAIL = String.raw`(?=\s+(?:on|via|using|ref|utr|txn|dated|a\/c|upi|to|from|for)\b|[.,]|$)`;
+const MERCHANT = [
+  new RegExp(String.raw`(?:paid to|sent to|transferred to|payment to|\bto)\s+${NOISE}([A-Za-z0-9@._&'\- ]{2,40}?)${TAIL}`, 'i'),
+  new RegExp(String.raw`(?:received from|credited by|\bfrom)\s+${NOISE}([A-Za-z0-9@._&'\- ]{2,40}?)${TAIL}`, 'i'),
+  new RegExp(String.raw`(?:\bat|towards)\s+${NOISE}([A-Za-z0-9@._&'\- ]{2,40}?)${TAIL}`, 'i'),
 ];
+const REFERENCE = /(?:ref(?:erence)?|utr|txn|transaction)\s*(?:no\.?|number|id|#)?\s*[:\-=]?\s*([0-9A-Za-z]{6,25})/i;
 
-/**
- * Retreives currently user-whitelisted package IDs for selective monitoring.
- */
-export function getMonitoredApps() {
-  try {
-    const raw = localStorage.getItem(MONITORED_APPS_KEY);
-    if (!raw) {
-      // Default initial selection: GPay and PhonePe only
-      return ['com.google.android.apps.nbu.paisa.user', 'com.phonepe.app'];
-    }
-    return JSON.parse(raw);
-  } catch {
-    return [];
-  }
-}
+/* Package → readable name, for "where did this come from" on a capture card. */
+export const APP_NAMES = {
+  'com.phonepe.app': 'PhonePe',
+  'com.google.android.apps.nbu.paisa.user': 'Google Pay',
+  'net.one97.paytm': 'Paytm',
+  'in.org.npci.upiapp': 'BHIM',
+  'indwin.c3.shareapp': 'slice',
+  'money.super.payments': 'super.money',
+  'com.naviapp': 'Navi',
+  'com.kotak811mobilebankingapp.instantsavingsupiscanandpayrecharge': 'Kotak 811',
+  'com.kotak.neo': 'Kotak Neo',
+  'com.snapwork.hdfc': 'HDFC',
+  'com.sbi.lotusintouch': 'SBI',
+  'com.csam.icici.bank.imobile': 'ICICI',
+  'com.google.android.apps.messaging': 'Messages',
+  sms: 'SMS',
+};
 
-/**
- * Updates monitored app checklist and instantly syncs to native Android OS Service via bridge.
- */
-export function setMonitoredApps(packageList = []) {
-  const cleanList = Array.from(new Set(packageList.filter(Boolean)));
-  localStorage.setItem(MONITORED_APPS_KEY, JSON.stringify(cleanList));
-  
-  // Sync immediately to Android native SharedPreferences if bridge is active
-  if (window.FinNative && typeof window.FinNative.updateMonitoredApps === 'function') {
-    window.FinNative.updateMonitoredApps(JSON.stringify(cleanList));
-  }
-  return cleanList;
-}
-
-/**
- * Parses financial notification/SMS text into clean amount, transaction direction, and merchant metadata.
- */
+/** @returns a transaction proposal, or null when the text is not one. */
 export function parseNotificationText(packageId, text = '', title = '', timestamp = Date.now()) {
-  if (!text || !text.trim()) return null;
-  const fullText = `${title} ${text}`.trim();
-  const lower = fullText.toLowerCase();
+  const full = `${title} ${text}`.trim();
+  if (!full || NOT_A_TXN.test(full)) return null;
 
-  // Ensure notification contains monetary reference or banking keywords
-  const hasMoneyMarker = /(?:₹|rs\.?|inr|amt|amount)/i.test(fullText) || 
-                         /(?:debited|credited|paid to|received from|spent|sent to)/i.test(fullText);
-  if (!hasMoneyMarker) return null;
+  const m = full.match(AMOUNT);
+  if (!m) return null;
+  const amountPaise = parseAmount(m[1] || m[2]);
+  if (!(amountPaise > 0)) return null;
 
-  // Extract amount: handles "Rs. 450", "INR 1,200.50", "Rs 50.00", "₹120"
-  const amtMatch = fullText.match(/(?:₹|rs\.?|inr)\s*([\d,]+(?:\.\d{1,2})?)/i) || 
-                   fullText.match(/amount(?: of)?\s*(?:₹|rs\.?|inr)?\s*([\d,]+(?:\.\d{1,2})?)/i);
-  if (!amtMatch || !amtMatch[1]) return null;
+  const type = CREDIT.test(full) && !DEBIT.test(full) ? 'receive' : 'spend';
 
-  const amountPaise = parseAmount(amtMatch[1]);
-  if (isNaN(amountPaise) || amountPaise <= 0) return null;
-
-  // Determine transaction direction
-  let type = 'spend';
-  if (/\b(?:credited|received|refunded|deposited|added|got)\b/i.test(fullText) && 
-      !/\b(?:debited|paid|spent|sent|deducted)\b/i.test(fullText)) {
-    type = 'receive';
+  let merchant = '';
+  for (const r of MERCHANT) {
+    const hit = full.match(r)?.[1]?.trim();
+    if (hit) { merchant = hit.replace(/[.,\s]+$/, ''); break; }
   }
+  if (!merchant) merchant = title.trim() || packageId || 'Unknown';
 
-  // Extract merchant / counterparty entity name
-  let merchant = 'Unknown Merchant';
-  const merchMatch = fullText.match(/(?:paid to|sent to|received from|credited to|at|by|(?:\bto\b))\s+(?!(?:your|account|a\/c|bank)\b)([A-Za-z0-9\s&._-]+?)(?:\s+(?:via|using|ref|utr|on|for|from|a\/c|upi|in|with|\.|\d)|$)/i) ||
-                     fullText.match(/(?:from)\s+(?!(?:your|account|a\/c|bank)\b)([A-Za-z0-9\s&._-]+?)(?:\s+(?:via|using|ref|utr|on|for|to|a\/c|upi|in|with|\.|\d)|$)/i);
-  if (merchMatch && merchMatch[1].trim().length >= 2) {
-    merchant = merchMatch[1].trim().replace(/[.\s]+$/, '');
-  } else if (title && !title.toLowerCase().includes('bank') && !title.toLowerCase().includes('pay')) {
-    merchant = title.trim();
-  }
-
-  // Extract UPI Reference Number or Bank UTR if available
-  const refMatch = fullText.match(/(?:ref|utr|txn|id)(?: no\.?| number| #)?\s*[:=-]?\s*([0-9a-zA-Z]{6,20})/i);
-  const reference = refMatch ? refMatch[1].trim() : null;
-
-  const appInfo = POPULAR_FINANCE_APPS.find((a) => a.id === packageId) || { name: packageId || 'System Alert' };
+  const reference = full.match(REFERENCE)?.[1] || null;
 
   return {
     id: uid(),
@@ -105,52 +77,11 @@ export function parseNotificationText(packageId, text = '', title = '', timestam
     amountPaise,
     merchant,
     note: `${merchant}${reference ? ` (Ref: ${reference})` : ''}`,
+    reference,
     sourceAppId: packageId || 'unknown',
-    sourceAppName: appInfo.name,
+    sourceAppName: APP_NAMES[packageId] || title || packageId || 'Alert',
     timestamp,
-    rawText: text.slice(0, 140),
+    rawText: text.slice(0, 200),
     status: 'pending',
   };
-}
-
-/**
- * Returns currently queued transaction suggestions detected from OS notifications.
- */
-export function getNotificationQueue() {
-  try {
-    return JSON.parse(localStorage.getItem(NOTIFY_QUEUE_KEY) || '[]');
-  } catch {
-    return [];
-  }
-}
-
-/**
- * Appends a new detected transaction proposal to the live review queue.
- */
-export function addToNotificationQueue(proposal) {
-  if (!proposal || !proposal.amountPaise) return;
-  const queue = getNotificationQueue();
-  // Prevent duplication of identical reference or exact simultaneous timestamps
-  if (queue.some((i) => (proposal.reference && i.note.includes(proposal.reference)) || 
-                        (i.amountPaise === proposal.amountPaise && Math.abs(i.timestamp - proposal.timestamp) < 5000))) {
-    return;
-  }
-  queue.unshift(proposal);
-  localStorage.setItem(NOTIFY_QUEUE_KEY, JSON.stringify(queue.slice(0, 30))); // Cap at 30 recent notifications
-}
-
-/**
- * Removes a processed or dismissed transaction item from the review queue.
- */
-export function removeFromQueue(id) {
-  const queue = getNotificationQueue().filter((item) => item.id !== id);
-  localStorage.setItem(NOTIFY_QUEUE_KEY, JSON.stringify(queue));
-  return queue;
-}
-
-/**
- * Clears the entire notification review queue.
- */
-export function clearNotificationQueue() {
-  localStorage.removeItem(NOTIFY_QUEUE_KEY);
 }

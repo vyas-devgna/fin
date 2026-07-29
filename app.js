@@ -24,7 +24,7 @@ import * as PayLens from './paylens.js';
 import {
   openActions, openComposer, openAccountEditor, openBudgetEditor, openGoalEditor,
   openCategoryEditor, openTxnDetail, openDebtDetail, openOnboarding, deleteWithUndo,
-  openDatePicker, openUpiScanner, openAiCopilot, openAiSettings, openNotificationReview, openAutomationSettings,
+  openDatePicker,
 } from './sheets.js';
 
 /* Four hubs, chosen by task rather than by record type.
@@ -32,11 +32,14 @@ import {
  * they answered "what kinds of things exist" when the daily question is "what do
  * I do right now". Accounts, budgets and goals are consulted weekly, so they
  * live one level down inside Money. */
+/* Money sits second, not Pay. This is a financial-management app that happens to
+ * route payments — putting Pay in the prime slot made it read as a payments app
+ * with some charts attached. */
 const TABS = [
   { id: 'today', label: 'Today', icon: 'home' },
+  { id: 'money', label: 'Money', icon: 'wallet' },
   { id: 'pay', label: 'Pay', icon: 'move' },
   { id: 'ask', label: 'Ask', icon: 'spark' },
-  { id: 'money', label: 'Money', icon: 'wallet' },
 ];
 
 const MONEY_SEGMENTS = [
@@ -261,12 +264,15 @@ function Today() {
       </div>`).join('')}</div>
   </section>` : ''}
 
-  <section class="hero glass rise">
-    <p class="hero-label">Safe to spend today</p>
-    <h2 class="hero-amount" data-animate>${esc($$$(perDay))}</h2>
+  <!-- A negative balance must not render as "safe to spend ₹0": that reads as
+       "you have nothing" when the truth is "you are overdrawn". -->
+  <section class="hero glass rise ${t.available < 0 ? 'over' : ''}">
+    <p class="hero-label">${t.available < 0 ? 'Overdrawn' : 'Safe to spend today'}</p>
+    <h2 class="hero-amount" data-animate>${esc($$$(t.available < 0 ? t.available : perDay))}</h2>
     <div class="hero-meta">
-      <span>${esc($$$(t.available))} spendable</span>
-      <small>· ${daysLeft} ${daysLeft === 1 ? 'day' : 'days'} left this month</small>
+      ${t.available < 0
+        ? '<span>Add an opening balance or record income</span>'
+        : `<span>${esc($$$(t.available))} spendable</span><small>· ${daysLeft} ${daysLeft === 1 ? 'day' : 'days'} left this month</small>`}
     </div>
     ${todayOut ? `<div class="hero-today">Spent today <b>${esc($$$(todayOut))}</b></div>` : ''}
   </section>
@@ -980,16 +986,23 @@ function Settings() {
   const days = St.daysSinceBackup();
   return `
   ${header('Settings', { back: true })}
-  <section class="block"><div class="block-head"><h3>Android OS & AI Automation</h3></div>
+  <section class="block"><div class="block-head"><h3>Security</h3></div>
     <div class="card list">
-      <button class="row row-tap" data-open-upi><span class="row-face">${icon('qr')}</span>
-        <span class="row-main"><b>UPI Payment Manager</b><small>Scan QR codes and invoke system apps</small></span>${icon('chevron')}</button>
-      <button class="row row-tap" data-open-auto><span class="row-face">${icon('trend')}</span>
-        <span class="row-main"><b>Selective OS Notification Access</b><small>Configure monitored payment & SMS apps</small></span>${icon('chevron')}</button>
-      <button class="row row-tap" data-open-aicfg><span class="row-face">${icon('spark')}</span>
-        <span class="row-main"><b>OpenRouter AI Advisor</b><small>Free intelligent financial copilot</small></span>${icon('chevron')}</button>
-      <button class="row row-tap" data-biometric-lock><span class="row-face">${icon('lock')}</span>
-        <span class="row-main"><b>Biometric Security</b><small>Require fingerprint/face on launch</small></span>${icon('chevron')}</button>
+      <label class="row"><span class="row-face">${icon('lock')}</span>
+        <span class="row-main"><b>Lock the app</b><small>${Native.isNative() ? 'Fingerprint or device PIN on every launch' : 'Available in the Android app only'}</small></span>
+        <input type="checkbox" class="tog" data-lock-toggle ${S.meta.lockEnabled ? 'checked' : ''} ${Native.isNative() ? '' : 'disabled'}></label>
+      ${S.meta.lockEnabled ? `<button class="row row-tap" data-lock-test><span class="row-face">${icon('check')}</span>
+        <span class="row-main"><b>Test unlock</b><small>Check the sensor still works</small></span>${icon('chevron')}</button>` : ''}
+    </div>
+    ${Native.isNative() ? '' : '<p class="hint">The web build cannot lock — the browser has no biometric prompt.</p>'}
+  </section>
+
+  <section class="block"><div class="block-head"><h3>Automation</h3></div>
+    <div class="card list">
+      <button class="row row-tap" data-monitored><span class="row-face">${icon('trend')}</span>
+        <span class="row-main"><b>Apps to watch</b><small>${(S.meta.monitoredApps || []).length} selected for SMS and notification capture</small></span>${icon('chevron')}</button>
+      <button class="row row-tap" data-smsbackfill><span class="row-face">${icon('note')}</span>
+        <span class="row-main"><b>Scan recent SMS</b><small>Pull transactions from the last 30 days</small></span>${icon('chevron')}</button>
     </div>
   </section>
   <section class="block"><div class="block-head"><h3>Your data</h3></div>
@@ -1327,16 +1340,58 @@ async function sendChat(text) {
 }
 
 function bindSettings(root) {
-  $('[data-open-upi]', root)?.addEventListener('click', () => openUpiScanner());
-  $('[data-open-auto]', root)?.addEventListener('click', () => openAutomationSettings());
-  $('[data-open-aicfg]', root)?.addEventListener('click', () => openAiSettings());
-  $('[data-biometric-lock]', root)?.addEventListener('click', () => {
-    haptic('tap');
-    if (window.FinNative && typeof window.FinNative.requestBiometricLock === 'function') {
-      window.FinNative.requestBiometricLock();
-    } else {
-      toast('Biometric hardware authentication active in native Android app only.');
+  /* App lock. The toggle is the whole fix: the shield was already wired, but
+   * nothing ever set meta.lockEnabled, so it could never arm. */
+  $('[data-lock-toggle]', root)?.addEventListener('change', async (e) => {
+    const want = e.target.checked;
+    if (!want) { await St.setMeta('lockEnabled', false); haptic('tap'); render(); return; }
+    if (!Native.isNative()) { e.target.checked = false; toast('The lock needs the Android app.'); return; }
+    if (!Native.biometricAvailable()) {
+      e.target.checked = false;
+      toast('Set a screen lock on this phone first.');
+      return;
     }
+    // Prove it works before arming, or a failing sensor locks you out of your
+    // own ledger on next launch.
+    const { ok, reason } = await Native.unlock();
+    if (!ok) { e.target.checked = false; haptic('warn'); toast(`Not enabled — ${reason || 'verification failed'}`); return; }
+    await St.setMeta('lockEnabled', true);
+    haptic('success');
+    toast('Lock on. Fin will ask on every launch.', { tone: 'good' });
+    render();
+  });
+  $('[data-lock-test]', root)?.addEventListener('click', async () => {
+    haptic('tap');
+    const { ok, reason } = await Native.unlock();
+    toast(ok ? 'Verified.' : `Failed — ${reason || 'unknown'}`, { tone: ok ? 'good' : '' });
+  });
+  $('[data-monitored]', root)?.addEventListener('click', () => {
+    const apps = Native.installedApps();
+    if (!apps.length) { toast('Needs the Android app.'); return; }
+    const on = new Set(S.meta.monitoredApps || []);
+    // Known finance apps first — scrolling 400 packages to find your bank is not a picker.
+    const known = apps.filter((a) => Native.APP_LABELS[a.package]);
+    const rest = apps.filter((a) => !Native.APP_LABELS[a.package]).sort((a, b) => a.label.localeCompare(b.label));
+    pickSheet({
+      title: 'Apps to watch',
+      subtitle: 'Their notifications become transaction suggestions',
+      items: [...known, ...rest].map((a) => ({
+        id: a.package, label: Native.labelFor(a.package) || a.label,
+        sub: on.has(a.package) ? 'watching' : '', selected: on.has(a.package),
+      })),
+      async onPick(pkg) {
+        on.has(pkg) ? on.delete(pkg) : on.add(pkg);
+        await Native.setMonitoredApps([...on]);
+        haptic('select'); render();
+      },
+    });
+  });
+  $('[data-smsbackfill]', root)?.addEventListener('click', async () => {
+    if (!Native.smsPermission()) { Native.requestSmsPermission(); toast('Grant SMS access, then try again.'); return; }
+    haptic('tap');
+    const found = Native.readSms(300, Date.now() - 30 * 86400000);
+    toast(found.length ? `${found.length} found — review them on Today.` : 'No transactions found in recent SMS.');
+    if (found.length) go('today');
   });
   $('[data-export]', root)?.addEventListener('click', exportBackup);
   $('[data-import]', root)?.addEventListener('click', () => pickFile('.json', importBackup));
@@ -1557,34 +1612,18 @@ async function boot() {
   render();
   document.body.classList.remove('booting');
 
-  // Home-screen shortcuts (manifest "shortcuts" or native Android shortcuts)
+  // Launcher shortcuts. Routed through the hubs rather than opening sheets, so
+  // a shortcut lands somewhere you can keep working from.
   const shortcut = new URLSearchParams(location.search).get('do') || new URLSearchParams(location.search).get('action');
-  if (shortcut === 'upi') {
-    history.replaceState({ name: 'home', param: null }, '', location.pathname);
-    setTimeout(() => openUpiScanner(), 260);
-  } else if (shortcut === 'ai') {
-    history.replaceState({ name: 'home', param: null }, '', location.pathname);
-    setTimeout(() => openAiCopilot(), 260);
-  } else if (shortcut && TYPES[shortcut]) {
-    history.replaceState({ name: 'home', param: null }, '', location.pathname);
-    setTimeout(() => openComposer({ type: shortcut }), 260);
-  } else if (!S.meta.onboarded && !S.txns.length) setTimeout(() => openOnboarding(render), 420);
+  if (shortcut) history.replaceState({ name: 'today', param: null }, '', location.pathname);
+  if (shortcut === 'upi' || shortcut === 'scan') { go('pay'); setTimeout(() => PayLens.openScanner(), 300); }
+  else if (shortcut === 'ai' || shortcut === 'ask') go('ask');
+  else if (shortcut && TYPES[shortcut]) setTimeout(() => openComposer({ type: shortcut }), 260);
+  else if (!S.meta.onboarded && !S.txns.length) setTimeout(() => openOnboarding(render), 420);
 
-  /* Register two-way bridge with Android native OS */
-  window.FinApp = window.FinApp || {};
-  window.FinApp.onNotificationReceived = async (txnProposal) => {
-    const { addToNotificationQueue } = await import('./automation.js');
-    addToNotificationQueue(txnProposal);
-    render();
-    toast(`⚡ Detected payment: ₹${(txnProposal.amountPaise/100).toFixed(2)} at ${txnProposal.merchant}`, {
-      action: 'Review', onAction: () => openNotificationReview(), ms: 7000, tone: 'good'
-    });
-  };
-  window.FinApp.quickAction = (action) => {
-    if (action === 'upi') openUpiScanner();
-    else if (action === 'ai') openAiCopilot();
-    else if (action === 'expense') openComposer({ type: 'spend' });
-  };
+  // NOTE: the bridge is installed once by Native.install() at the top of boot().
+  // A second `window.FinApp = ...` block used to live here and silently replaced
+  // quickAction, so launcher shortcuts stopped reaching the router.
   if (S.meta.pendingRecurring) {
     toast(`${S.meta.pendingRecurring} repeating ${S.meta.pendingRecurring === 1 ? 'entry was' : 'entries were'} added.`, { action: 'See', onAction: () => go('activity') });
     S.meta.pendingRecurring = 0;

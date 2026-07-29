@@ -10,4 +10,4 @@
 export const OPENROUTER_KEY = 'sk-or-v1-REPLACE_ME';
 
 /* Free and fast. Swap for a bigger model if the reasoning feels thin. */
-export const OPENROUTER_MODEL = 'meta-llama/llama-3.3-70b-instruct:free';
+export const OPENROUTER_MODEL = 'nvidia/nemotron-3-super-120b-a12b:free';

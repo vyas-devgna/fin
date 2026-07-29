@@ -1151,13 +1151,17 @@ svg.ico { width: 22px; height: 22px; flex: none; }
 .hero-today { margin-top: 10px; padding-top: 10px; border-top: .5px solid var(--line-2); font-size: 13.5px; color: var(--text-2); }
 .hero-today b { color: var(--text); font-weight: 620; }
 
-/* ── Quick log ────────────────────────────────────────────────────────────── */
-.quicklog { margin-top: 14px; padding: 16px 14px 14px; border-radius: 24px; }
+/* ── Quick log ────────────────────────────────────────────────────────────────
+ * Deliberately compact. On a 720×1640 phone the first draft filled half the
+ * viewport and pushed today's transactions off-screen, which defeats the point
+ * of putting both on one page. */
+.quicklog { margin-top: 12px; padding: 12px 12px 12px; border-radius: 22px; }
 .ql-amount {
   display: flex; align-items: baseline; justify-content: center; gap: 3px;
-  font-size: 42px; font-weight: 700; letter-spacing: -.04em; padding: 2px 0 12px;
+  font-size: 34px; font-weight: 700; letter-spacing: -.04em; padding: 0 0 8px;
   transition: color var(--base);
 }
+.hero.over .hero-amount { color: var(--red); }
 .ql-amount .cur { font-size: .5em; font-weight: 600; color: var(--text-2); }
 .ql-amount.empty { color: var(--text-3); }
 
@@ -1358,10 +1362,78 @@ body.locked-shield #app, body.locked-shield #tabbar { visibility: hidden; }
   .card, .glass, #tabbar { background: var(--card-solid); }
 }
 
-/* Wider screens: the app stays a single readable column, centred. */
+/* ══ Responsive ══════════════════════════════════════════════════════════════
+ * One readable column at every width. The app is not a dashboard; making it
+ * wider only makes the eye travel further for the same information.
+ */
+
+/* Small phones (≤360px): tighten gutters and shrink the pads before anything
+ * wraps or clips. */
+@media (max-width: 360px) {
+  :root { --gutter: 14px; --radius: 20px; }
+  .hero { padding: 18px 16px 15px; }
+  .hero-amount { font-size: clamp(30px, 9.5vw, 38px); }
+  .ql-key, .key { height: 42px; font-size: 19px; }
+  .ql-amount { font-size: 34px; }
+  .stats { gap: 8px; }
+  .stat { padding: 11px 12px 10px; }
+  .stat-value { font-size: 17px; }
+  .pay-big { padding: 16px 13px 13px; }
+  .pay-big b { font-size: 15px; }
+  .tab span { font-size: 9.5px; }
+}
+
+/* Landscape on a phone: the keypad would eat the whole screen, so the quick-log
+ * goes side-by-side and the sheets stop being full-height. */
+@media (max-height: 520px) and (orientation: landscape) {
+  .quicklog { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: start; }
+  .ql-amount { grid-column: 1; padding-bottom: 6px; }
+  .ql-cats { grid-column: 1; }
+  .ql-pad { grid-column: 2; grid-row: 1 / span 3; }
+  .ql-actions { grid-column: 1; }
+  .sheet.tall { height: auto; max-height: 94dvh; }
+  .scan-stage { aspect-ratio: 16/9; }
+  .chat { min-height: 30vh; }
+}
+
+/* Tablets and desktop: centre the column, widen only the grids that genuinely
+ * benefit from more columns. */
 @media (min-width: 620px) {
   #app { padding-inline: 24px; }
   .stats { grid-template-columns: repeat(4, 1fr); }
+  .captures { display: grid; grid-template-columns: 1fr 1fr; }
+  .ql-pad { max-width: 320px; margin-inline: auto; }
+  .ql-actions { max-width: 320px; margin-inline: auto; }
+}
+
+@media (min-width: 900px) {
+  #tabbar { width: 420px; }
+  .chat-bar { width: min(560px, calc(100% - 48px)); }
+}
+
+/* Foldables and very tall screens: stop the hero from stranding the fold. */
+@media (min-height: 900px) {
+  .chat { min-height: 60vh; }
+}
+
+/* Respect the user's font-size setting instead of fighting it. */
+@media (prefers-reduced-transparency: reduce) {
+  .glass, .card, #tabbar, .sheet, .chat-bar { backdrop-filter: none; background: var(--card-solid); }
+}
+
+/* Xiaomi gesture pill sits higher than the stock inset; give the bar room so it
+ * is never half-covered on this device. */
+@supports (padding: env(safe-area-inset-bottom)) {
+  #tabbar { bottom: max(calc(env(safe-area-inset-bottom) + 10px), 14px); }
+}
+
+/* Anything wide enough to be a mouse-driven screen gets hover states; touch
+ * devices skip them so taps do not leave a stuck highlight. */
+@media (hover: hover) and (pointer: fine) {
+  .row-tap:hover, .dist-row:hover, .seg-btn:hover { background: var(--line-2); }
+  .btn:hover { filter: brightness(1.06); }
+  .tab:hover { color: var(--text-2); }
+  .tab.on:hover { color: var(--tint); }
 }
 
 /* ── AI Copilot, UPI Scanner & OS Automation Styles ───────────────────────── */
