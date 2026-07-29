@@ -1,154 +1,163 @@
-# Fin → SpendRouter: Implementation Plan
+# Plan v2 — rebuild the UI for one phone, one person, daily use
 
-Grounded in a read of the actual code at commit `078ace5`, not the aspirational spec.
-Positioning: **a payment router and expense-intelligence wrapper.** Money never passes
-through the app. It scans, classifies, routes to a UPI app, records, and learns.
+Written after re-reading every message. Supersedes v1 (native/AI phases, now shipped).
 
-Single user, single device. No commercial constraints, no Play Store policy limits,
-no multi-tenant concerns. That changes what is worth building: SMS reading is fine,
-hardcoded keys are fine (with the caveat in §0), and there is no onboarding to design
-for strangers.
+**Target device is not "Android".** It is one Xiaomi 2411DRN47I (Redmi Note 14 Pro),
+HyperOS on Android 16 / SDK 36, en-GB, with Google Pay, PhonePe, Paytm, BHIM, Amazon
+Pay, WhatsApp, Kotak 811, Kotak Neo, Navi and Google Messages installed. Every default
+should be derived from that, not from a generic list.
 
 ---
 
-## §0 — Blocking issue: the API key
+## What is actually wrong
 
-`vyas-devgna/fin` is a **public** repository. Committing `sk-or-v1-…` there gets it
-scraped and drained within minutes; this is automated and reliable, not hypothetical.
-The key in the request has also been pasted in plaintext chat, so it is already burned.
+Your words, mapped to what I found in the code.
 
-**Resolution shipped in Phase 2:**
+### "UI and navigation is bad, and you are building on top of it"
 
-| Surface | Key source | Setup cost |
+Correct, and I was. The inherited structure is five flat peer tabs (Home, Accounts,
+Activity, Budgets, Goals) — an *object model*, not a *task model*. It answers "what
+kinds of records exist" when the daily question is "what do I do right now".
+
+Measured cost of the two things you do every day:
+
+| Task | Taps today | Should be |
 |---|---|---|
-| Android APK (primary) | `secrets.js`, gitignored, copied into APK assets at build | zero |
-| Public PWA | prompt once → IndexedDB | one paste, once |
-| Public repo | `secrets.example.js` placeholder only | n/a |
+| Log a spend | FAB → verb → amount → save (+2 sheet animations) | 2 |
+| Confirm a captured SMS txn | Settings → Automation → queue → item → accept | 1, on the first screen |
+| Pay someone and record it | not a single flow at all | 3 |
 
-Action required from you: rotate the key, put the new one in `secrets.js`, and set a
-credit limit on it at openrouter.ai.
+### "UPI and payment modules logic and UI is very bad"
 
----
+- `upi.js:scanUpiQr` polls `BarcodeDetector` on a `<video>` at 300 ms with no viewfinder,
+  no torch, no "move closer", and no result if the API is missing. On HyperOS this is
+  the difference between a scanner that works and one that stares blankly.
+- There is **no pre-payment screen**. The whole premise — decide *before* paying — is absent.
+- There is **no post-payment confirmation**. The app cannot distinguish paid from cancelled.
+- The UI never lets you pick which app to pay with, so the native routing I just shipped
+  is unreachable.
+- Static QR (no amount) has no amount-entry path.
 
-## §1 — What is actually broken right now
+### "Automation modules logic and UI is very bad, not customised for my phone"
 
-Verified by reading the source, not by claim.
+- `automation.js` stores the queue in **`localStorage`** while the entire rest of the app
+  uses IndexedDB through `store.js`. Consequences: the review queue is invisible to
+  backup/export, survives "erase everything", and is capped at 30 items.
+- `POPULAR_FINANCE_APPS` is a hardcoded generic list that does not contain Kotak 811,
+  Kotak Neo or Navi — three apps actually on your phone.
+- The queue is buried behind Settings → Automation. Captures you never see are captures
+  that do nothing.
+- Nothing reconciles a capture against a transaction you already logged manually.
 
-| # | Defect | Location | Root cause |
-|---|---|---|---|
-| 1 | **Biometric lock never unlocks** | `MainActivity.kt:246` | `onAuthenticationSucceeded` only shows a Toast. No `onAuthenticationError`, no `onAuthenticationFailed`, and no call back into JS. The web layer waits forever. |
-| 2 | Device-credential fallback also silent | `MainActivity.kt:266` | `startActivityForResult(…, 102)` with no `onActivityResult` override. |
-| 3 | **Cannot set a default UPI app** | `MainActivity.kt:166` | Always `Intent.createChooser(...)`. Never `setPackage(...)`. |
-| 4 | No way to list installed UPI apps | `MainActivity.kt` | `getInstalledUpiApps()` does not exist. |
-| 5 | UPI apps may be invisible on Android 11+ | `AndroidManifest.xml:10` | `<queries>` declares only the `upi` scheme; explicit packages are absent. |
-| 6 | **No SMS reading at all** | `AndroidManifest.xml` | `RECEIVE_SMS` / `READ_SMS` absent; no receiver; `FinSmsReceiver.kt` does not exist. |
-| 7 | Notification queue is write-only from native | `MainActivity.kt:206` | JS polls `getNotificationQueue()`; nothing pushes on arrival except one `evaluateJavascript` path. |
-| 8 | AI has no memory and no persona | `ai.js:82` | System prompt is rebuilt per call from nothing. No vendor graph, no ledger context, no continuity. |
-| 9 | AI key requires manual entry | `ai.js:40` | Throws if `localStorage` is empty. |
-| 10 | Navigation is a flat 5-tab list | `app.js` | Every task costs 3–5 taps. No quick-log. No review queue surfacing. |
+### Already fixed this session (native layer, shipped in `e0b7517`)
 
----
+Biometric callbacks · directed UPI `setPackage` routing · `getInstalledUpiApps` ·
+SMS receive + inbox back-fill · one shared integer-paise parser · `QUERY_ALL_PACKAGES`
+(Kotak/Navi were invisible) · Xiaomi autostart + battery escape hatches · device
+auto-profiling · new logo.
 
-## §2 — Phase plan
-
-### Phase 1 — Native layer (fixes 1–7)
-
-- [ ] `AndroidManifest.xml`: add `RECEIVE_SMS`, `READ_SMS`, `USE_BIOMETRIC`,
-      `QUERY_ALL_PACKAGES`; register `FinSmsReceiver`; add explicit `<package>`
-      entries for GPay, PhonePe, Paytm, BHIM, Amazon Pay, CRED, WhatsApp, Samsung Pay,
-      and the major bank apps.
-- [ ] `MainActivity.kt`:
-  - [ ] `requestBiometricLock()` → wire **all four** callbacks
-        (`Succeeded`, `Failed`, `Error`, negative-button) to
-        `window.FinApp.onBiometricResult(bool, reason)`.
-  - [ ] Override `onActivityResult` for the device-credential path (request 102).
-  - [ ] `getInstalledUpiApps()` → JSON `[{package, label}]` via `queryIntentActivities`.
-  - [ ] `launchUpiIntent(uri, targetPackage)` → `setPackage()` when a package is given,
-        chooser only when it is empty or resolution fails.
-  - [ ] `readRecentSms(limit, sinceMillis)` → on-demand inbox read for back-fill.
-  - [ ] `postToWeb(fn, json)` helper so native→JS calls stop being ad-hoc strings.
-- [ ] `FinSmsReceiver.kt` (new): `SMS_RECEIVED` broadcast → parse → append to the
-      shared queue → nudge the WebView if it is alive.
-- [ ] `FinNotificationListener.kt`: widen the parser; share one parsing function with
-      the SMS receiver rather than duplicating regex.
-- [ ] `android/.gitignore` — `build/`, `.gradle/`, `local.properties` are currently
-      untracked but would be committed by a blanket `git add`.
-
-### Phase 2 — AI that actually remembers (fixes 8–9)
-
-- [ ] `secrets.js` (gitignored) + `secrets.example.js` + `.gitignore` entry.
-- [ ] `ai.js` key resolution order: `secrets.js` → IndexedDB → prompt.
-- [ ] **Persona**: a Chief-of-Staff system prompt that is blunt, numeric, and refuses
-      to give generic advice. Rebuilt each call from live ledger state, not static text.
-- [ ] **Memory**, three tiers, all local:
-  - `vendorMemory` — VPA/merchant → category, usual amount range, preferred app,
-    visit count, last seen, trust.
-  - `aiFacts` — durable user facts the model may write ("rent is due on the 3rd",
-    "Ravi is a flatmate"), each with provenance and a delete button.
-  - `chatLog` — last N turns, trimmed by token budget, never unbounded.
-- [ ] **Structured output only.** The model returns JSON commands against a schema;
-      `store.js` validates and applies. The model never writes the ledger directly —
-      an LLM that can silently mutate a money database is a bug generator.
-- [ ] Offline heuristic stays the fallback on every path.
-
-### Phase 3 — Navigation rebuilt for daily use (fix 10)
-
-Current cost of the most common action (log a spend): tap FAB → pick verb → type →
-save = 4 interactions plus two sheet animations.
-
-Target: **one thumb, one screen, under two seconds.**
-
-- [ ] **Persistent quick-log bar** on Home: amount pad is always present, category is
-      one tap, save is one tap. No sheet for the common case.
-- [ ] **Four hubs** instead of five flat tabs:
-  - `Today` — safe-to-spend, quick-log, review queue badge, today's movements
-  - `Pay` — scan, VPA entry, routing rules, pre-payment budget check
-  - `Ask` — AI chief of staff
-  - `Money` — accounts, budgets, goals, debts, insights (was four separate tabs)
-- [ ] **Review queue** front and centre — SMS/notification captures are worthless if
-      they are three taps deep.
-- [ ] Swipe between hubs; back gesture always safe; every destructive action undoable.
-- [ ] Biometric shield renders **before** first paint, not after.
-
-### Phase 4 — Routing intelligence
-
-- [ ] Vendor → app rules, category → app rules, amount-band rules, with an explicit
-      precedence order (vendor > category > amount > default) and a visible
-      "why this app" explanation.
-- [ ] Pre-payment card: usual amount, budget headroom, duplicate-payment warning,
-      new-VPA-for-known-vendor warning.
-- [ ] Post-payment reconciliation: `Paid / Probably / Failed / Cancelled`, never
-      assume success because an app opened.
-
-### Phase 5 — Verification
-
-- [ ] `node test.js` — extend to cover SMS regex variants, routing precedence,
-      envelope maths, and AI command-schema validation. Target: all green.
-- [ ] `gradlew assembleDebug` → `adb install -r` → Logcat clean boot.
-- [ ] Manual: biometric unlock, directed UPI launch to a chosen package, live SMS
-      capture appearing in the review queue.
+**The plumbing works. Nothing in the UI exposes it yet.** That is the whole of this plan.
 
 ---
 
-## §3 — Deliberately not building
+## The rebuild
 
-| Item | Why |
-|---|---|
-| AR overlays | You said no. Also solves nothing a static card does not. |
-| Payment-gateway / merchant mode | You are not a merchant. Nothing to reconcile against. |
-| Account Aggregator | Needs a licensed partner. Months of compliance for one user. |
-| Accessibility-service scraping | Fragile, and reads every screen on the device. |
-| Community fraud database | One user is not a community. |
-| Split / household / trip modes | Build when a second person actually needs settling. |
-| On-device ML classifier | Rules plus frequency counts will beat it until there are
-  thousands of transactions. Revisit at year two. |
+### 1. Four hubs, chosen by task
 
-The spec listed ~115 features. Most are variations of six real ones: capture, classify,
-route, warn, record, explain. Building 115 shallow features produces an app that is
-worse at all six.
+```
+Today     what do I do right now      review queue, quick-log, safe-to-spend, today's movements
+Pay       move money                  scan, pay a person, routing rules, pre/post payment
+Ask       think about money           AI chief of staff
+Money     the records                 accounts, budgets, goals, debts, insights
+```
+
+Accounts/Budgets/Goals/Activity stop being top-level. They are *records*, consulted
+weekly. The queue and quick-log are *daily*, so they get the front page.
+
+- [ ] Rewrite `app.js` routing: 4 hubs, horizontal swipe, direction-aware transitions.
+- [ ] `Today` gets: review-queue cards (accept/edit/dismiss inline), an always-visible
+      quick-log bar, safe-to-spend, today's list.
+- [ ] `Money` becomes a segmented hub over the existing four screens — those render
+      fine, they are just mis-placed in the hierarchy.
+- [ ] Delete the FAB. A quick-log bar on Today beats a button that opens a sheet that
+      opens a sheet.
+
+### 2. Quick-log: two taps, no sheet
+
+- [ ] Amount pad inline on Today. Category chips ranked by your actual frequency.
+      Account defaults to last used. Save commits and clears without navigating.
+- [ ] Long-press a chip to make it the default.
+
+### 3. Payment flow, end to end
+
+- [ ] **Scan** — proper viewfinder: framing box, torch toggle, "move closer" on small
+      QR, gallery import, and manual VPA entry as a first-class path (not a fallback).
+- [ ] **Pre-payment card** (the actual differentiator): payee, what you usually pay them,
+      which budget it hits and how much headroom is left, duplicate-payment warning,
+      new-VPA-for-known-payee warning — *before* the UPI app opens.
+- [ ] **Route** — which app, and why, from the rules engine already in `store.js`
+      (`resolveUpiApp`: vendor > category > amount band > default). One tap to override,
+      one tap to make the override permanent.
+- [ ] **Post-payment** — on resume, ask: Paid / Probably / Failed / Cancelled. Never
+      assume success because an app opened. Attach note, category, receipt photo.
+- [ ] Static QR with no amount → amount entry pre-filled with your usual for that payee.
+
+### 4. Automation you can actually see
+
+- [ ] Move the capture queue out of `localStorage` into IndexedDB via `store.js`, so it
+      is backed up, exportable, and erasable with everything else.
+- [ ] Queue cards on `Today`: amount, merchant, source app, one tap to accept as a
+      transaction, swipe to dismiss.
+- [ ] **Reconciliation** — a capture matching a transaction you already logged (same
+      amount, ±90 s) offers to merge instead of duplicating.
+- [ ] App picker built from `getInstalledApps()` — your real apps, with real names,
+      pre-ticked from the device profile.
+- [ ] **Health card**: notification access, SMS permission, battery unrestricted,
+      Xiaomi autostart — each with a one-tap fix. Without this the automation dies
+      silently and looks like it was never built.
+- [ ] SMS back-fill button: pull the last N days from the inbox on demand.
+
+### 5. Ask
+
+- [ ] Chat surface over the engine already in `ai.js`. Streaming, suggested openers
+      drawn from live state ("why was this month expensive?"), and an inspectable,
+      deletable memory list.
+- [ ] Voice input via `SpeechRecognition` — one tap, speak, confirm.
+
+### 6. Xiaomi-specific polish
+
+- [ ] Respect the gesture-nav inset; HyperOS's pill overlaps a bottom bar at default insets.
+- [ ] 120 Hz: keep transforms/opacity only on animated paths, no layout thrash.
+- [ ] Honour the device's dark mode and the en-GB locale already detected.
 
 ---
 
-## §4 — Status
+## Order
 
-Phase 1 and 2 are being implemented now. Phase 3 follows. Phases 4–5 after that.
+1. Hub navigation + Today (unblocks everything; biggest daily win)
+2. Automation queue on Today + health card (makes shipped native work visible)
+3. Payment flow (scan → pre-pay → route → confirm)
+4. Ask
+5. Xiaomi polish
+
+Each step ends with `node test.js`, a Gradle build, an `adb install`, and a clean
+Logcat boot before the next one starts.
+
+---
+
+## Not doing
+
+AR overlays · merchant/gateway mode · Account Aggregator · accessibility scraping ·
+community fraud data · split/household/trip modes · on-device ML.
+
+Rules plus frequency counts beat a classifier until there are thousands of
+transactions. Revisit at year two.
+
+---
+
+## Needs you
+
+1. **Rotate the OpenRouter key** and paste it into `secrets.js` (gitignored, bundled
+   into the APK, never into the public repo). AI is inert until then.
+2. One-time on the phone, after the next install: enable Notification access, grant SMS,
+   set battery to Unrestricted, and turn on Autostart. The health card will link to each.
